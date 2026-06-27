@@ -59,15 +59,28 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	errChan := make(chan error, 1)
 	go func() {
 		log.Printf("API Server listening on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen error: %v", err)
+			errChan <- err
 		}
 	}()
 
-	<-ctx.Done()
-	log.Println("Shutting down API Server gracefully...")
+	var startupErr error
+	select {
+	case <-ctx.Done():
+		log.Println("Shutting down API Server gracefully...")
+		// Non-blocking drain check to see if an error was simultaneously received
+		select {
+		case err := <-errChan:
+			startupErr = err
+		default:
+		}
+	case err := <-errChan:
+		log.Printf("API Server error: %v. Initiating shutdown...", err)
+		startupErr = err
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -75,4 +88,8 @@ func main() {
 		log.Printf("error during server shutdown: %v", err)
 	}
 	log.Println("Server stopped")
+
+	if startupErr != nil {
+		os.Exit(1)
+	}
 }
