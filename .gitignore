@@ -30,3 +30,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Override global gitignore of dotfiles for project-level agents/skills
+!.agents/
+!.agents/**
+.agents/settings.local.json
+
+# Session recall
+.agents/session-log.md
+
+# Telemetry for fix-review
+.agents/skills/fix-review/telemetry.jsonl

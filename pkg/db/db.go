@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +16,7 @@ type Config struct {
 	User     string
 	Password string
 	Database string
+	SSLMode  string // NFR-9: allow production to enforce SSL (e.g. "require" or "verify-full")
 	MaxConns int32
 	MinConns int32
 }
@@ -22,10 +24,25 @@ type Config struct {
 // NewPool initializes a new PostgreSQL connection pool via pgxpool.
 // NFR-3: Connection Pooling to prevent exhaustion during worker spikes.
 func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
-	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
+	// Start with an empty config and set fields directly to prevent DSN injection 
+	// from special characters in credentials (e.g., passwords with '@' or ':').
+	sslMode := cfg.SSLMode
+	if sslMode == "" {
+		sslMode = "disable" // Default to disable for local dev if not specified
+	}
 
-	poolConfig, err := pgxpool.ParseConfig(connStr)
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(cfg.User, cfg.Password),
+		Host:   fmt.Sprintf("%s:%s", cfg.Host, cfg.Port),
+		Path:   cfg.Database,
+	}
+
+	q := u.Query()
+	q.Set("sslmode", sslMode)
+	u.RawQuery = q.Encode()
+
+	poolConfig, err := pgxpool.ParseConfig(u.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
