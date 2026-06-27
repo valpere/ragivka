@@ -1,0 +1,26 @@
+# Project-level override for /fix-review
+provider: ollama
+reviewer_set: cloud
+
+reviewers:
+  openrouter:
+    round_1: { model: deepseek/deepseek-v3.2 }
+    round_2: { model: google/gemini-2.5-flash }
+    round_3: { model: x-ai/grok-4.3 }
+
+  ollama_cloud:
+    round_1: { model: glm-5.1:cloud }
+    round_2: { model: deepseek-v4-flash:cloud }
+    round_3: { model: kimi-k2.6:cloud }
+
+  ollama_local:
+    round_1: { model: granite3.3:8b }
+    round_2: { model: qwen2.5-coder:7b }
+    round_3: { model: granite3.3:8b }
+
+ollama_api_url:     http://localhost:11434/api/chat
+openrouter_api_url: https://openrouter.ai/api/v1/chat/completions
+
+post_summary_to_pr: true
+telemetry_enabled: true
+telemetry_file: .agents/skills/fix-review/telemetry.jsonl
