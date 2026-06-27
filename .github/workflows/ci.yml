@@ -34,7 +34,7 @@ jobs:
       with:
         go-version: '1.26.x'
     - name: golangci-lint
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@v7
       with:
         version: v2.12.2
 
@@ -57,5 +57,5 @@ jobs:
     - name: Run govulncheck
       uses: golang/govulncheck-action@v1
       with:
-        go-version-input: '1.26.x'
+        go-version-input: '1.26.4'
         work-dir: .
