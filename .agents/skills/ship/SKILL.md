@@ -29,7 +29,7 @@ If ambiguities exist, ask the USER with options and tradeoffs. **Wait for their 
 1. Commit and push: `git add . && git commit -m "feat: implement issue <issue-id>" && git push -u origin HEAD`.
 2. Open PR: `gh pr create --title "feat: issue <issue-id>" --body "Closes #<issue-id>"`
 3. Mark in-review: `gh issue edit <issue-id> --repo valpere/ragivka --add-label "in-review" --remove-label "in-progress"`.
-4. Spawn a `codex` or `glm-5:cloud` review agent via the CLI to review the PR diff for security, simplicity, and architecture.
+4. Spawn a review agent via the CLI using local Ollama models (ensure `.env` is sourced) to review the PR diff for security, simplicity, and architecture.
 5. Apply any fixes requested by the review agents, amend the commit (`git commit --amend --no-edit`), and force push (`git push -f`).
 
 ## STEP 3: Merge PR
