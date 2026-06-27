@@ -1,0 +1,24 @@
+sequenceDiagram
+    participant User
+    participant App as App API
+    participant River as River Queue (DB)
+    participant Worker as Background Worker
+    participant Tool as Tool Layer
+    participant External as CRM / External API
+    participant DB as PostgreSQL
+    
+    User->>App: "Generate a sales report and email it to the client."
+    App->>River: Insert Job (GenerateReport)
+    App-->>User: "I'm working on that now..."
+    
+    River->>Worker: Dequeue & Claim Job (Short Transaction)
+    Worker->>Worker: Analyze Request, Extract Parameters
+    Worker->>Tool: Execute 'DraftReport' & 'SendEmail' (Write Tool)
+    Tool->>Tool: Check Idempotency Key
+    Tool->>External: POST /send-email (Outside DB Transaction)
+    External-->>Tool: 200 OK
+    Tool->>DB: Insert AuditLog Record
+    Worker->>River: Mark Job Complete (Short Transaction)
+    
+    Worker->>App: Push Notification (Callback)
+    App-->>User: "The report has been sent!"

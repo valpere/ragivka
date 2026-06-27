@@ -1,0 +1,54 @@
+flowchart TD
+    subgraph Interfaces [1. Interfaces Layer]
+        A1[Telegram Adapter]
+        A2[Web Widget API]
+    end
+
+    subgraph AppAPI [2. Application API Layer]
+        B1[Auth & Tenants]
+        B2[Session Manager]
+        B3[Conversations API]
+    end
+
+    subgraph Orchestrator [3. Workflow Orchestrator Layer]
+        C1[Postgres State Machine FSM]
+        C2[River Job Queue]
+        C3[Graph Execution & Retries]
+        C4[Human-in-the-loop Gates]
+    end
+
+    subgraph AILayer [4. AI Layer]
+        D1[Model Router]
+        D2[Prompt Registry]
+        D3[Structured Output Parser]
+        D4[Guardrails & Critic]
+    end
+
+    subgraph RAGLayer [5. RAG / Knowledge Layer]
+        E1[Ingestion & Parsers]
+        E2[Chunker & Embedder]
+        E3[Hybrid Retrieval pgvector+BM25]
+        E4[Re-ranker & Citations]
+    end
+
+    subgraph ToolLayer [6. Tool Layer]
+        F1[Read Tools]
+        F2[Draft Tools]
+        F3[Write Tools]
+    end
+
+    subgraph DataLayer [7. Data & Ops Layer]
+        G1[(PostgreSQL / pgvector)]
+        G2[(Optional Redis Cache)]
+        G3[(Object Storage)]
+    end
+
+    Interfaces --> AppAPI
+    AppAPI --> Orchestrator
+    Orchestrator --> AILayer
+    Orchestrator --> RAGLayer
+    Orchestrator --> ToolLayer
+    
+    AILayer --> DataLayer
+    RAGLayer --> DataLayer
+    Orchestrator --> DataLayer

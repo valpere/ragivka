@@ -1,0 +1,12 @@
+erDiagram
+    TENANT ||--o{ USER : has
+    TENANT ||--o{ SESSION : scopes
+    TENANT ||--o{ DOCUMENT : owns
+    
+    USER ||--o{ SESSION : participates_in
+    SESSION ||--o{ MESSAGE : contains
+    SESSION ||--o{ RIVER_JOB : triggers
+    SESSION ||--o{ AUDIT_LOG : tracks
+    USER ||--o{ AUDIT_LOG : performs
+    
+    DOCUMENT ||--o{ CHUNK : splits_into

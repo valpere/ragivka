@@ -1,0 +1,21 @@
+sequenceDiagram
+    participant User
+    participant Channel as Telegram Adapter
+    participant App as App API & FSM
+    participant RAG as RAG Layer
+    participant AI as AI Layer
+    participant DB as PostgreSQL
+    
+    User->>Channel: "What is the return policy?"
+    Channel->>App: Parse Message
+    App->>DB: Load Session (Check FSM state == 'Active')
+    App->>RAG: Retrieve Context
+    RAG->>DB: Hybrid Search (pgvector + BM25)
+    DB-->>RAG: Top 20 Chunks
+    RAG->>RAG: Re-rank Top 5
+    RAG-->>App: Formatted Context
+    App->>AI: Generate Answer (Prompt + Context)
+    AI-->>App: Structured Output + Citations
+    App->>DB: Save Message & Update Session
+    App-->>Channel: Return Markdown Response
+    Channel-->>User: "You have 30 days..."

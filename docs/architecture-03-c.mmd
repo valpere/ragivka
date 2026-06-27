@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant User
+    participant Human as Support Operator
+    participant App as App API & FSM
+    participant Tool as Tool Layer
+    participant DB as PostgreSQL
+    
+    User->>App: "Refund my order"
+    App->>DB: Load Session (state: Active)
+    App->>Tool: Try Execute Refund (Write Tool)
+    Tool-->>App: Needs Human Approval
+    App->>DB: Update Session (state: WaitingForHuman)
+    App-->>Human: "Approval needed for refund request #123"
+    
+    Human->>App: Approves Action
+    App->>DB: Update Session (state: Active)
+    App->>Tool: Execute Refund
+    Tool->>DB: Log to AuditLog
+    App-->>User: "Refund processed successfully."
