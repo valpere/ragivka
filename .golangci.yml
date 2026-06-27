@@ -1,3 +1,4 @@
+version: 2
 run:
   timeout: 5m
   issues-exit-code: 1
@@ -12,24 +13,7 @@ linters-settings:
     min-len: 3
     min-occurrences: 3
 
-linters:
-  disable-all: true
-  enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - typecheck
-    - gocyclo
-    - goconst
-    - gofmt
-    - goimports
-    - misspell
-    - unparam
-    - unconvert
-    - revive
+
 
 issues:
   exclude-use-default: false
