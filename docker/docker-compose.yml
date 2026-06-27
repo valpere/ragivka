@@ -1,18 +1,48 @@
 version: '3.8'
 
 services:
-  db:
+  # PostgreSQL with pgvector extension
+  # Scaffolded for NFR-22 (Backup/Recovery PITR) and NFR-24 (Disaster Recovery)
+  postgres:
     image: pgvector/pgvector:pg16
-    container_name: ragivka_postgres
-    restart: always
+    container_name: ragivka_db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: ragivka
+      POSTGRES_USER: ragivka
+      POSTGRES_PASSWORD: ragivka_password
+      POSTGRES_DB: ragivka_db
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_wal_archive:/archive # Scaffolded for PITR
+    command: 
+      - "postgres"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "archive_mode=on"
+      - "-c"
+      - "archive_command=cp %p /archive/%f"
+      - "-c"
+      - "max_wal_senders=10"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragivka -d ragivka_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis for ephemeral caching and rate limiting (FR-24, NFR-20)
+  redis:
+    image: redis:7-alpine
+    container_name: ragivka_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
 volumes:
-  pgdata:
+  postgres_data:
+  postgres_wal_archive:
