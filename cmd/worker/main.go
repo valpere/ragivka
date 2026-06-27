@@ -53,18 +53,31 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	errChan := make(chan error, 1)
 	go func() {
 		log.Printf("Worker metrics listening on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("metrics listen error: %v", err)
+			errChan <- err
 		}
 	}()
 
 	// 3. Start River worker pool (stubbed for Phase 1)
 	// Placeholder for River worker start
 
-	<-ctx.Done()
-	log.Println("Shutting down Background Worker gracefully...")
+	var startupErr error
+	select {
+	case <-ctx.Done():
+		log.Println("Shutting down Background Worker gracefully...")
+		// Non-blocking drain check to see if an error was simultaneously received
+		select {
+		case err := <-errChan:
+			startupErr = err
+		default:
+		}
+	case err := <-errChan:
+		log.Printf("Worker metrics server error: %v. Initiating shutdown...", err)
+		startupErr = err
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -72,4 +85,8 @@ func main() {
 		log.Printf("error during metrics server shutdown: %v", err)
 	}
 	log.Println("Worker stopped")
+
+	if startupErr != nil {
+		os.Exit(1)
+	}
 }
