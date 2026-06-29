@@ -128,8 +128,8 @@ except FileNotFoundError:
 Session ends (exit / /exit)
   └─ Stop hook: .agents/hooks/session-end.sh   (if configured)
        ├─ Skip if /session-end ran within 2h (file mtime check)
-       ├─ Try agy -p  (Gemini Flash → Pro, cheapest first)
-       ├─ Try opencode run --format json  (available ollama/*:cloud models)
+       ├─ Try agy -p  (Gemini 3.5 Flash Low → Medium → High → Gemini 3.1 Pro)
+       ├─ Try opencode run --format json  (glm-5:cloud, kimi-k2.5:cloud, minimax-m2.5:cloud, qwen3-coder-next:cloud)
        └─ Fallback: raw transcript excerpt
 
 Next session opens
@@ -147,9 +147,8 @@ manually. The hooks add automation.
 .agents/session-log.md
 ```
 
-**Setup guide** (hooks + settings.local.json):
-`docs/session-recall-setup.md` in the vmm-rada project, or
-`~/wrk/projects/vmm-rada/vmm-rada/docs/session-recall-setup.md`.
+**Setup guide**: hooks are already installed in `.agents/hooks/` and wired
+in `.agents/settings.local.json`. No further setup needed.
 
 **Troubleshooting** (if hooks are configured):
 ```bash

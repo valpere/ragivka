@@ -295,14 +295,14 @@ Git diff:
 
 Substitute:
 - `{PROJECT_CONTEXT}` — value of `$PROJECT_CONTEXT`
-- `{DIFF}` — output of `git diff $(git merge-base HEAD origin/${BASE_BRANCH})...HEAD`
+- `{DIFF}` — output of `gh pr diff "${PR_NUMBER}"`
 
 ---
 
 ## STEP 3: Fan Out — Three Models in Parallel
 
 ```bash
-DIFF=$(git diff $(git merge-base HEAD origin/${BASE_BRANCH})...HEAD)
+DIFF=$(gh pr diff "${PR_NUMBER}")
 PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s|{PROJECT_CONTEXT}|$PROJECT_CONTEXT|" | sed "s|{DIFF}|$DIFF|")
 
 # Output dir for this run
@@ -477,7 +477,7 @@ A gate failure does not automatically mean a fix is at fault. Before
 reverting:
 
 1. **Check what files this PR actually touches** —
-   `git diff --name-only $(git merge-base HEAD origin/${BASE_BRANCH})...HEAD`.
+   `gh pr diff "${PR_NUMBER}" --name-only`.
 2. **Map failure to file types**:
    - Build / type-check / unit-test failure → caused only by changes to
      source files of that language (`.ts`/`.tsx`, `.go`, `.rs`, `.py` etc.).
