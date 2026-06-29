@@ -41,3 +41,6 @@ go.work.sum
 
 # Telemetry for fix-review
 .agents/skills/fix-review/telemetry.jsonl
+
+# Session recall index — per-project, local-only
+.agents/sessions.db
