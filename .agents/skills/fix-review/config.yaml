@@ -1,26 +1,63 @@
-# Project-level override for /fix-review
+# fix-review multi-model configuration — ragivka
+#
+# Provider: Ollama only. OpenRouter was removed 2026-05-30 (pay-only).
+# Ollama Cloud covers the same niche with a free tier.
+
 provider: ollama
-reviewer_set: cloud
 
 reviewers:
-  openrouter:
-    round_1: { model: deepseek/deepseek-v3.2 }
-    round_2: { model: google/gemini-2.5-flash }
-    round_3: { model: x-ai/grok-4.3 }
-
   ollama_cloud:
-    round_1: { model: glm-5.1:cloud }
-    round_2: { model: deepseek-v4-flash:cloud }
-    round_3: { model: kimi-k2.6:cloud }
+    # `think: false` suppresses the reasoning phase on thinking models —
+    # saves 80-90% completion tokens at the cost of fewer findings.
+    # Use for diversity-only models on smaller diffs.
+    round_1:
+      model: deepseek-v4-flash:cloud      # DeepSeek thinking — primary deliberation
+      think: true
+    round_2:
+      model: glm-5.2:cloud                # Zhiyu AI thinking — SWE-Bench Pro SOTA, family diversity
+      think: true
+    round_3:
+      model: gemma4:31b-cloud             # Google thinking-capable, arch diversity
+      think: false
+    # Alternatives (rotate in if a primary stops responding):
+    #   kimi-k2.7-code:cloud       — Moonshot, deeper deliberation but ~6× slower
+    #   deepseek-v3.2:cloud        — 671B sparse-attn, GPT-5-class reasoning
+    #   nemotron-3-ultra:cloud     — high-throughput reasoning
+    #   devstral-small-2:24b-cloud — fast SWE-Bench specialist
+    #   qwen3-coder-next:cloud     — DO NOT USE with think:false; outputs [] in 2 tokens without reviewing
 
   ollama_local:
-    round_1: { model: granite3.3:8b }
-    round_2: { model: qwen2.5-coder:7b }
-    round_3: { model: granite3.3:8b }
+    round_1:
+      model: granite3.3:8b
+    round_2:
+      model: qwen2.5-coder:7b
+    round_3:
+      model: granite3.3:8b
 
-ollama_api_url:     http://localhost:11434/api/chat
-openrouter_api_url: https://openrouter.ai/api/v1/chat/completions
+  # CLI failover — engaged when Ollama Cloud probe fails
+  cli:
+    - { name: opencode,     cmd: "sh -c 'opencode run -m opencode/nemotron-3-super-free --format json \"$(cat)\"'" }
+    - { name: gemini,       cmd: "gemini --model gemini-2.5-flash-lite" }
+    - { name: agy,          cmd: "agy --print --model 'GPT-OSS 120B (Medium)' --dangerously-skip-permissions" }
+
+# cloud  — use reviewers.ollama_cloud (requires OLLAMA_API_KEY)
+# local  — use reviewers.ollama_local (requires running `ollama serve`)
+reviewer_set: cloud
+
+# Cloud: https://ollama.com/api/chat  (Bearer auth via OLLAMA_API_KEY)
+# Local: http://localhost:11434/api/chat  (no auth)
+# Use native /api/chat — required for per-round `think: false` support.
+# The OpenAI-compat /v1/chat/completions silently ignores `think`.
+ollama_api_url:       https://ollama.com/api/chat
+ollama_api_url_local: http://localhost:11434/api/chat
+
+arbiter: claude   # do not change
+
+# delta — rounds 2-3 see only changes from the previous round's commit
+# full  — rounds 2-3 see the full PR diff since branch cut
+diff_scope: delta
 
 post_summary_to_pr: true
+
 telemetry_enabled: true
 telemetry_file: .agents/skills/fix-review/telemetry.jsonl
