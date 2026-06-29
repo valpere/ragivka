@@ -31,16 +31,17 @@ go.work.sum
 # .idea/
 # .vscode/
 
-# Override global gitignore of dotfiles for project-level agents/skills
-!.agents/
-!.agents/**
-.agents/settings.local.json
+# Override global gitignore of dotfiles for project-level Claude infrastructure
+!.agents
+!.claude/
+!.claude/**
+.claude/settings.local.json
 
 # Session recall
-.agents/session-log.md
+.claude/session-log.md
 
 # Telemetry for fix-review
-.agents/skills/fix-review/telemetry.jsonl
+.claude/skills/fix-review/telemetry.jsonl
 
 # Session recall index — per-project, local-only
-.agents/sessions.db
+.claude/sessions.db
