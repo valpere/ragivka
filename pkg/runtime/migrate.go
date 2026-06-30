@@ -18,7 +18,7 @@ import (
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	// 1. App schema migrations via goose.
 	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	goose.SetBaseFS(migrations.FS)
 	if err := goose.SetDialect("postgres"); err != nil {
