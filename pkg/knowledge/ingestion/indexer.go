@@ -47,7 +47,7 @@ ON CONFLICT (tenant_id, document_id, chunk_index) DO NOTHING`
 
 	batch := &pgx.Batch{}
 	for _, c := range chunks {
-		batch.Queue(q, uuid.New(), tenantID, docID, c.Content, c.TokenCount, c.ChunkIndex, vectorLiteral(c.Embedding))
+		batch.Queue(q, uuid.New(), tenantID, docID, c.Content, c.TokenCount, c.ChunkIndex, VectorLiteral(c.Embedding))
 	}
 
 	results := idx.pool.SendBatch(ctx, batch)
@@ -61,9 +61,9 @@ ON CONFLICT (tenant_id, document_id, chunk_index) DO NOTHING`
 	return results.Close()
 }
 
-// vectorLiteral formats a float32 slice as the PostgreSQL vector literal expected by ::vector.
+// VectorLiteral formats a float32 slice as the PostgreSQL vector literal expected by ::vector.
 // Example: [0.1, 0.2, 0.3] → "[0.1,0.2,0.3]"
-func vectorLiteral(v []float32) string {
+func VectorLiteral(v []float32) string {
 	if len(v) == 0 {
 		return "[]"
 	}
