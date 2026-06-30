@@ -49,12 +49,18 @@ func main() {
 	}
 	log.Println("Migrations applied")
 
-	// 4. HTTP server with /health and /metrics (NFR-12)
+	// 4. HTTP server with /health, /metrics, and POST /v1/sessions/{id}/messages (NFR-12, FR-1/2/3)
+	// Full orchestrator wiring (LLM router, retriever, River enqueuer) is deferred to Phase 3+.
+	// The endpoint is registered now and returns 503 until AI layer is wired.
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", obs.MetricsHandler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
+	})
+	// POST /v1/sessions/{id}/messages — calls TieredOrchestrator.Run (FR-1/FR-2/FR-3).
+	mux.HandleFunc("/v1/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "orchestrator not yet wired — complete AI layer (Phase 3) first", http.StatusServiceUnavailable)
 	})
 
 	port := getenv("PORT", "8080")
