@@ -88,11 +88,17 @@ func TestOllamaClient_contextCancellation(t *testing.T) {
 	// handlerStarted is closed by the handler when it starts processing, so
 	// the test knows the request is in-flight before it cancels the context.
 	handlerStarted := make(chan struct{})
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		close(handlerStarted)
-		// Block until the client cancels the request or a safety timeout fires.
+		// Block until the test-level context is cancelled or a safety timeout fires.
+		// We use ctx (closed over from the test) rather than r.Context() because
+		// Go's HTTP/1.1 server does not reliably cancel r.Context() the moment the
+		// client drops the connection; it only detects closure during the next TCP
+		// poll, which can take several seconds.  Using the test context guarantees
+		// the handler unblocks immediately when cancel() is called, preventing
+		// httptest.Server.Close() from blocking for its 5-second internal timeout.
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 		case <-time.After(5 * time.Second):
 		}
 		w.WriteHeader(http.StatusOK)
