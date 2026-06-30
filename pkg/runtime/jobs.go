@@ -177,7 +177,7 @@ func buildContextBlock(chunks []retrieval.RankedChunk) string {
 	var sb strings.Builder
 	sb.WriteString("<retrieved_context>\n")
 	for i, c := range chunks {
-		sb.WriteString(fmt.Sprintf("[%d] %s\n\n", i+1, c.Content))
+		fmt.Fprintf(&sb, "[%d] %s\n\n", i+1, c.Content)
 	}
 	sb.WriteString("</retrieved_context>")
 	return sb.String()
