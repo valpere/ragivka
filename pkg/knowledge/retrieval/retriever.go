@@ -107,7 +107,7 @@ func (r *pgHybridRetriever) Retrieve(ctx context.Context, query string, topK int
 	if topK > 0 {
 		recallAtK = float64(len(ranked)) / float64(topK)
 	}
-	obs.LogRetrievalQuality(ctx, raw, uuid.New(), topK, recallAtK)
+	obs.LogRetrievalQuality(ctx, tenantID.String(), uuid.New(), topK, recallAtK)
 
 	return ranked, nil
 }
