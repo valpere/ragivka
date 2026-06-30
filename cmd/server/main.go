@@ -10,7 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/valpere/ragivka/pkg/db"
 	"github.com/valpere/ragivka/pkg/obs"
+	"github.com/valpere/ragivka/pkg/runtime"
 )
 
 // NFR-9: Deployment Modes (API Server)
@@ -20,8 +22,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// 1. Setup OpenTelemetry
-	// NFR-11: distributed tracing
+	// 1. Tracing (NFR-11)
 	otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	shutdownTracer, err := obs.InitTracer(ctx, "ragivka-api-server", otelEndpoint)
 	if err != nil {
@@ -35,22 +36,28 @@ func main() {
 		}
 	}()
 
-	// 2. Expose Prometheus metrics endpoint
-	// NFR-12 Metrics
+	// 2. Database pool
+	pool, err := db.NewPool(ctx, dbConfig())
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+	}
+	defer pool.Close()
+
+	// 3. Migrations (goose + River) — idempotent, safe on every startup
+	if err := runtime.RunMigrations(ctx, pool); err != nil {
+		log.Fatalf("migrations failed: %v", err)
+	}
+	log.Println("Migrations applied")
+
+	// 4. HTTP server with /health and /metrics (NFR-12)
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", obs.MetricsHandler())
-	
-	// Server stubs
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
+	port := getenv("PORT", "8080")
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      mux,
@@ -71,7 +78,6 @@ func main() {
 	select {
 	case <-ctx.Done():
 		log.Println("Shutting down API Server gracefully...")
-		// Non-blocking drain check to see if an error was simultaneously received
 		select {
 		case err := <-errChan:
 			startupErr = err
@@ -92,4 +98,24 @@ func main() {
 	if startupErr != nil {
 		os.Exit(1)
 	}
+}
+
+func dbConfig() db.Config {
+	return db.Config{
+		Host:     getenv("DB_HOST", "localhost"),
+		Port:     getenv("DB_PORT", "5432"),
+		User:     getenv("DB_USER", "ragivka"),
+		Password: getenv("DB_PASSWORD", "ragivka_password"),
+		Database: getenv("DB_NAME", "ragivka_db"),
+		SSLMode:  getenv("DB_SSLMODE", "disable"),
+		MaxConns: 20,
+		MinConns: 2,
+	}
+}
+
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

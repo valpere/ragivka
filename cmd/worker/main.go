@@ -10,7 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/valpere/ragivka/pkg/db"
 	"github.com/valpere/ragivka/pkg/obs"
+	"github.com/valpere/ragivka/pkg/runtime"
 )
 
 // NFR-9: Deployment Modes (Worker Mode)
@@ -20,8 +22,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// 1. Setup OpenTelemetry
-	// NFR-11: distributed tracing
+	// 1. Tracing (NFR-11)
 	otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	shutdownTracer, err := obs.InitTracer(ctx, "ragivka-background-worker", otelEndpoint)
 	if err != nil {
@@ -35,18 +36,29 @@ func main() {
 		}
 	}()
 
-	// 2. Expose Prometheus metrics endpoint
-	// NFR-12 Metrics
+	// 2. Database pool
+	pool, err := db.NewPool(ctx, dbConfig())
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+	}
+	defer pool.Close()
+
+	// 3. Migrations — idempotent; worker runs them so it can start standalone (NFR-9)
+	if err := runtime.RunMigrations(ctx, pool); err != nil {
+		log.Fatalf("migrations failed: %v", err)
+	}
+	log.Println("Migrations applied")
+
+	// 4. Repository used by ExpireSessionsWorker
+	sessions := runtime.NewSessionRepository(pool)
+
+	// 5. Metrics endpoint (NFR-12)
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", obs.MetricsHandler())
 
-	port := os.Getenv("METRICS_PORT")
-	if port == "" {
-		port = "8081" // default metrics port for worker
-	}
-
-	server := &http.Server{
-		Addr:         ":" + port,
+	metricsPort := getenv("METRICS_PORT", "8081")
+	metricsServer := &http.Server{
+		Addr:         ":" + metricsPort,
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -55,33 +67,45 @@ func main() {
 
 	errChan := make(chan error, 1)
 	go func() {
-		log.Printf("Worker metrics listening on %s", server.Addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("Worker metrics listening on %s", metricsServer.Addr)
+		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errChan <- err
 		}
 	}()
 
-	// 3. Start River worker pool (stubbed for Phase 1)
-	// Placeholder for River worker start
+	// 6. River worker pool — blocks until ctx is cancelled, then drains gracefully (NFR-7)
+	workerErrChan := make(chan error, 1)
+	go func() {
+		log.Println("Starting River worker pool")
+		if err := runtime.StartWorker(ctx, pool, sessions); err != nil {
+			workerErrChan <- err
+		}
+	}()
 
 	var startupErr error
 	select {
 	case <-ctx.Done():
 		log.Println("Shutting down Background Worker gracefully...")
-		// Non-blocking drain check to see if an error was simultaneously received
 		select {
 		case err := <-errChan:
+			startupErr = err
+		case err := <-workerErrChan:
 			startupErr = err
 		default:
 		}
 	case err := <-errChan:
-		log.Printf("Worker metrics server error: %v. Initiating shutdown...", err)
+		log.Printf("Metrics server error: %v", err)
 		startupErr = err
+		stop()
+	case err := <-workerErrChan:
+		log.Printf("River worker error: %v", err)
+		startupErr = err
+		stop()
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("error during metrics server shutdown: %v", err)
 	}
 	log.Println("Worker stopped")
@@ -89,4 +113,24 @@ func main() {
 	if startupErr != nil {
 		os.Exit(1)
 	}
+}
+
+func dbConfig() db.Config {
+	return db.Config{
+		Host:     getenv("DB_HOST", "localhost"),
+		Port:     getenv("DB_PORT", "5432"),
+		User:     getenv("DB_USER", "ragivka"),
+		Password: getenv("DB_PASSWORD", "ragivka_password"),
+		Database: getenv("DB_NAME", "ragivka_db"),
+		SSLMode:  getenv("DB_SSLMODE", "disable"),
+		MaxConns: 20,
+		MinConns: 2,
+	}
+}
+
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

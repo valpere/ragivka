@@ -1,3 +1,4 @@
+-- +goose Up
 -- Phase 1c: PROMPT_VERSION
 -- FR-14: version-controlled storage for system prompts.
 -- Prompts are loaded by (tenant_id, name, version) — prevents drift between deployments.

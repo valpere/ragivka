@@ -1,3 +1,4 @@
+-- +goose Up
 -- Phase 1a: TENANT and USER
 -- The absolute security boundary — every downstream table references tenant_id.
 -- NFR-16: all queries must carry tenant_id; cross-tenant access is architectural violation.
