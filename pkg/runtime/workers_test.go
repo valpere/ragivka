@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,13 +18,19 @@ import (
 
 // mockSessionRepo implements SessionRepository with in-memory state.
 // Transition calls are recorded so tests can inspect the context used.
+// mu guards all field accesses so the mock is safe if tests ever use t.Parallel().
 type mockSessionRepo struct {
-	sessions       map[uuid.UUID]*Session
-	transitionCtxs []context.Context // contexts passed to each Transition call
+	mu                 sync.Mutex
+	sessions           map[uuid.UUID]*Session
+	transitionCtxs     []context.Context // contexts passed to each Transition call
+	forceTransitionErr map[uuid.UUID]error // per-session error injection for Transition
 }
 
 func newMockSessionRepo(initial ...*Session) *mockSessionRepo {
-	r := &mockSessionRepo{sessions: make(map[uuid.UUID]*Session)}
+	r := &mockSessionRepo{
+		sessions:           make(map[uuid.UUID]*Session),
+		forceTransitionErr: make(map[uuid.UUID]error),
+	}
 	for _, s := range initial {
 		cp := *s
 		r.sessions[cp.ID] = &cp
@@ -31,12 +39,16 @@ func newMockSessionRepo(initial ...*Session) *mockSessionRepo {
 }
 
 func (r *mockSessionRepo) Create(_ context.Context, s *Session) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	cp := *s
 	r.sessions[cp.ID] = &cp
 	return nil
 }
 
 func (r *mockSessionRepo) GetByID(_ context.Context, id uuid.UUID) (*Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	s, ok := r.sessions[id]
 	if !ok {
 		return nil, ErrNotFound
@@ -46,6 +58,8 @@ func (r *mockSessionRepo) GetByID(_ context.Context, id uuid.UUID) (*Session, er
 }
 
 func (r *mockSessionRepo) GetActiveByUserID(_ context.Context, userID uuid.UUID) (*Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, s := range r.sessions {
 		if s.UserID == userID && (s.State == StateActive || s.State == StateWaitingForHuman) {
 			cp := *s
@@ -57,8 +71,15 @@ func (r *mockSessionRepo) GetActiveByUserID(_ context.Context, userID uuid.UUID)
 
 // Transition mirrors the real pgSessionRepo: validates the FSM edge, then
 // enforces optimistic-lock version matching.
+// forceTransitionErr allows tests to inject ErrOptimisticLock or other errors for specific sessions.
+// Intentional in-place mutation on success: models the DB UPDATE that bumps version atomically.
 func (r *mockSessionRepo) Transition(ctx context.Context, id uuid.UUID, from, to State, version int) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.transitionCtxs = append(r.transitionCtxs, ctx)
+	if forced, ok := r.forceTransitionErr[id]; ok {
+		return 0, forced
+	}
 	if !Allowed(from, to) {
 		return 0, ErrInvalidTransition{From: from, To: to}
 	}
@@ -77,6 +98,8 @@ func (r *mockSessionRepo) Transition(ctx context.Context, id uuid.UUID, from, to
 // ListExpired returns sessions that are still in a non-terminal state.
 // Time-based filtering is omitted; the mock treats all such sessions as expired.
 func (r *mockSessionRepo) ListExpired(_ context.Context) ([]*Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var result []*Session
 	for _, s := range r.sessions {
 		if s.State == StateActive || s.State == StateWaitingForHuman {
@@ -92,7 +115,9 @@ func (r *mockSessionRepo) ListExpired(_ context.Context) ([]*Session, error) {
 // mockMessageRepo implements MessageRepository with an in-memory message slice.
 // ListForSession replicates the token-budget algorithm from pgMessageRepo (FR-23)
 // so the regression tests exercise real truncation logic without a DB.
+// mu guards all field accesses so the mock is safe if tests ever use t.Parallel().
 type mockMessageRepo struct {
+	mu       sync.Mutex
 	messages []*Message
 	created  []*Message
 }
@@ -102,6 +127,8 @@ func newMockMessageRepo(messages ...*Message) *mockMessageRepo {
 }
 
 func (r *mockMessageRepo) Create(_ context.Context, m *Message) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.created = append(r.created, m)
 	return nil
 }
@@ -109,6 +136,8 @@ func (r *mockMessageRepo) Create(_ context.Context, m *Message) error {
 // ListForSession traverses messages newest-first, accumulates the token budget,
 // then reverses the result to chronological order — identical logic to pgMessageRepo.
 func (r *mockMessageRepo) ListForSession(_ context.Context, sessionID uuid.UUID, maxTokens int) ([]*Message, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	unlimited := maxTokens <= 0
 	budget := maxTokens
 	var result []*Message
@@ -133,6 +162,8 @@ func (r *mockMessageRepo) ListForSession(_ context.Context, sessionID uuid.UUID,
 }
 
 func (r *mockMessageRepo) GetByJobID(_ context.Context, jobID int64) (*Message, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, m := range r.messages {
 		if m.JobID != nil && *m.JobID == jobID {
 			return m, nil
@@ -258,7 +289,7 @@ func TestMockMessageRepo_ListForSession_Unlimited(t *testing.T) {
 	)
 
 	for _, limit := range []int{0, -1} {
-		t.Run("maxTokens="+itoa(limit), func(t *testing.T) {
+		t.Run("maxTokens="+strconv.Itoa(limit), func(t *testing.T) {
 			msgs, err := repo.ListForSession(context.Background(), sessID, limit)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -343,6 +374,57 @@ func TestGenerateResponseWorker_Work_TerminalSessionSkip(t *testing.T) {
 	}
 }
 
+// TestGenerateResponseWorker_Work_IdempotencySkip is a regression test for NFR-4/NFR-15:
+// if a message with the same job ID already exists, Work must return nil without
+// calling the LLM router or creating a duplicate message.
+func TestGenerateResponseWorker_Work_IdempotencySkip(t *testing.T) {
+	sessID := uuid.New()
+	tenantID := uuid.New()
+	jobID := int64(42)
+
+	// Seed a pre-existing message for the same job (simulates a previous execution).
+	existing := &Message{
+		ID:        uuid.New(),
+		SessionID: sessID,
+		TenantID:  tenantID,
+		Role:      "assistant",
+		Content:   "already generated",
+		JobID:     &jobID,
+	}
+	sessions := newMockSessionRepo(&Session{
+		ID:       sessID,
+		TenantID: tenantID,
+		State:    StateActive,
+		Version:  0,
+	})
+	messages := newMockMessageRepo(existing)
+	router := &mockRouter{}
+	registry := &mockRegistry{}
+
+	worker := NewGenerateResponseWorker(messages, sessions, router, registry, nil)
+
+	job := &river.Job[GenerateResponseArgs]{
+		JobRow: &rivertype.JobRow{ID: jobID},
+		Args: GenerateResponseArgs{
+			TenantID:       tenantID,
+			SessionID:      sessID,
+			MessageID:      uuid.New(),
+			IdempotencyKey: "idem-42",
+		},
+	}
+
+	err := worker.Work(context.Background(), job)
+	if err != nil {
+		t.Fatalf("Work with duplicate job: want nil, got %v", err)
+	}
+	if router.called {
+		t.Error("router must not be called when job was already processed (idempotency)")
+	}
+	if len(messages.created) > 0 {
+		t.Errorf("no new message should be created for duplicate job, got %d", len(messages.created))
+	}
+}
+
 // ======================== Item 4: ExpireSessionsWorker per-session tenant context ========================
 
 // TestExpireSessionsWorker_Work_InjectsTenantContext is a regression test for PR #12:
@@ -385,22 +467,39 @@ func TestExpireSessionsWorker_Work_InjectsTenantContext(t *testing.T) {
 	}
 }
 
-// itoa converts an int to string for use in subtest names without importing strconv.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
+// TestExpireSessionsWorker_Work_SkipsErrOptimisticLock is a regression test for PR #12:
+// when Transition returns ErrOptimisticLock (another process already expired the session),
+// Work must skip that session and continue processing the remaining ones, returning nil.
+func TestExpireSessionsWorker_Work_SkipsErrOptimisticLock(t *testing.T) {
+	tenantID := uuid.New()
+	staleSessID := uuid.New()
+	okSessID := uuid.New()
+
+	sessions := newMockSessionRepo(
+		&Session{ID: staleSessID, TenantID: tenantID, State: StateActive, Version: 0},
+		&Session{ID: okSessID, TenantID: tenantID, State: StateActive, Version: 0},
+	)
+	// Inject ErrOptimisticLock for the stale session to simulate a concurrent expiry.
+	sessions.forceTransitionErr[staleSessID] = ErrOptimisticLock
+
+	worker := NewExpireSessionsWorker(sessions)
+	err := worker.Work(context.Background(), &river.Job[ExpireSessionsArgs]{
+		JobRow: &rivertype.JobRow{ID: 2},
+	})
+	if err != nil {
+		t.Fatalf("Work with one ErrOptimisticLock: want nil, got %v", err)
 	}
-	neg := n < 0
-	if neg {
-		n = -n
+
+	tctx := tenant.WithTenantID(context.Background(), tenantID.String())
+
+	// The ok session must have been transitioned to Expired.
+	ok, _ := sessions.GetByID(tctx, okSessID)
+	if ok.State != StateExpired {
+		t.Errorf("ok session: want state Expired, got %s", ok.State)
 	}
-	b := make([]byte, 0, 10)
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
+	// The stale session must remain Active (transition was skipped).
+	stale, _ := sessions.GetByID(tctx, staleSessID)
+	if stale.State != StateActive {
+		t.Errorf("stale session: want state Active (unchanged after skip), got %s", stale.State)
 	}
-	if neg {
-		b = append([]byte{'-'}, b...)
-	}
-	return string(b)
 }
