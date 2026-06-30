@@ -12,8 +12,10 @@ import (
 
 	"github.com/valpere/ragivka/pkg/aicore"
 	"github.com/valpere/ragivka/pkg/db"
+	"github.com/valpere/ragivka/pkg/knowledge/ingestion"
 	"github.com/valpere/ragivka/pkg/obs"
 	"github.com/valpere/ragivka/pkg/runtime"
+	"github.com/valpere/ragivka/pkg/storage"
 )
 
 // NFR-9: Deployment Modes (Worker Mode)
@@ -62,7 +64,31 @@ func main() {
 	router := aicore.NewRouter(ollamaClient, aicore.DefaultPolicy())
 	registry := aicore.NewPromptRegistry(pool)
 
-	// 5. Metrics endpoint (NFR-12)
+	// 5. Ingestion pipeline (Phase 2b, FR-8, FR-9, NFR-18)
+	s3Client := storage.NewS3Client(storage.S3Config{
+		Bucket:          getenv("S3_BUCKET", "ragivka"),
+		Region:          getenv("S3_REGION", "us-east-1"),
+		Endpoint:        os.Getenv("S3_ENDPOINT"),
+		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
+		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
+		UsePathStyle:    os.Getenv("S3_ENDPOINT") != "",
+	})
+	ingestPipeline := ingestion.NewPipeline(
+		ingestion.NewS3Connector(s3Client),
+		ingestion.NewRegexScrubber(),
+		ingestion.NewOllamaEmbedder(ingestion.OllamaEmbedConfig{
+			APIURL:      getenv("OLLAMA_EMBED_URL", "https://ollama.com/api/embed"),
+			APIKey:      os.Getenv("OLLAMA_API_KEY"),
+			Model:       getenv("OLLAMA_EMBED_MODEL", "bge-m3:latest"),
+			ExpectedDim: 1024,
+		}),
+		ingestion.NewIndexer(pool),
+		ingestion.NewDocumentRepository(pool),
+		ingestion.DefaultChunkConfig(),
+	)
+	ingestWorker := ingestion.NewIngestDocumentWorker(ingestPipeline)
+
+	// 6. Metrics endpoint (NFR-12)
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", obs.MetricsHandler())
 
@@ -83,11 +109,11 @@ func main() {
 		}
 	}()
 
-	// 6. River worker pool — blocks until ctx is cancelled, then drains gracefully (NFR-7)
+	// 7. River worker pool — blocks until ctx is cancelled, then drains gracefully (NFR-7)
 	workerErrChan := make(chan error, 1)
 	go func() {
 		log.Println("Starting River worker pool")
-		if err := runtime.StartWorker(ctx, pool, sessions, messages, router, registry); err != nil {
+		if err := runtime.StartWorker(ctx, pool, sessions, messages, router, registry, ingestWorker); err != nil {
 			workerErrChan <- err
 		}
 	}()
