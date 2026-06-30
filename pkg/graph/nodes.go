@@ -41,7 +41,7 @@ type RetrieveNode struct{ id string }
 func NewRetrieveNode(id string) *RetrieveNode { return &RetrieveNode{id: id} }
 func (n *RetrieveNode) ID() string            { return n.id }
 func (n *RetrieveNode) Run(_ context.Context, in NodeInput) (NodeOutput, error) {
-	return NodeOutput{Data: in.Data}, nil
+	return NodeOutput(in), nil
 }
 
 // GenerateNode is a graph step for LLM generation (integrates with
@@ -51,7 +51,7 @@ type GenerateNode struct{ id string }
 func NewGenerateNode(id string) *GenerateNode { return &GenerateNode{id: id} }
 func (n *GenerateNode) ID() string            { return n.id }
 func (n *GenerateNode) Run(_ context.Context, in NodeInput) (NodeOutput, error) {
-	return NodeOutput{Data: in.Data}, nil
+	return NodeOutput(in), nil
 }
 
 // ToolCallNode is a graph step that invokes a registered tool (integrates with
@@ -61,7 +61,7 @@ type ToolCallNode struct{ id string }
 func NewToolCallNode(id string) *ToolCallNode { return &ToolCallNode{id: id} }
 func (n *ToolCallNode) ID() string            { return n.id }
 func (n *ToolCallNode) Run(_ context.Context, in NodeInput) (NodeOutput, error) {
-	return NodeOutput{Data: in.Data}, nil
+	return NodeOutput(in), nil
 }
 
 // CriticNode is a graph step that evaluates output quality (integrates with
@@ -71,7 +71,7 @@ type CriticNode struct{ id string }
 func NewCriticNode(id string) *CriticNode { return &CriticNode{id: id} }
 func (n *CriticNode) ID() string          { return n.id }
 func (n *CriticNode) Run(_ context.Context, in NodeInput) (NodeOutput, error) {
-	return NodeOutput{Data: in.Data}, nil
+	return NodeOutput(in), nil
 }
 
 // BranchNode routes to one of two downstream paths based on a condition.
@@ -82,5 +82,5 @@ type BranchNode struct{ id string }
 func NewBranchNode(id string) *BranchNode { return &BranchNode{id: id} }
 func (n *BranchNode) ID() string          { return n.id }
 func (n *BranchNode) Run(_ context.Context, in NodeInput) (NodeOutput, error) {
-	return NodeOutput{Data: in.Data}, nil
+	return NodeOutput(in), nil
 }

@@ -98,7 +98,7 @@ func (e *GraphEngine) Execute(ctx context.Context, g *Graph, initialInput NodeIn
 		}
 
 		currentID = next.To
-		currentInput = NodeInput{Data: out.Data}
+		currentInput = NodeInput(out)
 	}
 
 	return lastOutput, nil
