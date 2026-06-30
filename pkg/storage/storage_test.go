@@ -119,3 +119,127 @@ func TestArtifact_tenantUUIDFromCtx_valid(t *testing.T) {
 		t.Errorf("got %v, want %v", got, id)
 	}
 }
+
+// memArtifactRepository is an in-memory ArtifactRepository for unit and higher-level tests.
+type memArtifactRepository struct {
+	mu        sync.RWMutex
+	artifacts map[uuid.UUID]*Artifact
+}
+
+func newMemArtifactRepo() *memArtifactRepository {
+	return &memArtifactRepository{artifacts: map[uuid.UUID]*Artifact{}}
+}
+
+func (m *memArtifactRepository) Create(_ context.Context, a *Artifact) error {
+	if a.ID == uuid.Nil {
+		a.ID = uuid.New()
+	}
+	cp := *a
+	m.mu.Lock()
+	m.artifacts[a.ID] = &cp
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *memArtifactRepository) GetByID(_ context.Context, id uuid.UUID) (*Artifact, error) {
+	m.mu.RLock()
+	a, ok := m.artifacts[id]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cp := *a
+	return &cp, nil
+}
+
+func (m *memArtifactRepository) ListForSession(_ context.Context, sessionID uuid.UUID) ([]*Artifact, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*Artifact
+	for _, a := range m.artifacts {
+		if a.SessionID == sessionID {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (m *memArtifactRepository) Delete(_ context.Context, id uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.artifacts[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.artifacts, id)
+	return nil
+}
+
+// TestArtifactRepository_interface verifies compile-time interface satisfaction.
+func TestArtifactRepository_interface(t *testing.T) {
+	var _ ArtifactRepository = newMemArtifactRepo()
+}
+
+func TestMemArtifactRepo_createAndGet(t *testing.T) {
+	repo := newMemArtifactRepo()
+	ctx := context.Background()
+	sessionID := uuid.New()
+
+	a := &Artifact{SessionID: sessionID, Type: "pdf", S3Key: "t/doc.pdf", SizeBytes: 1024}
+	if err := repo.Create(ctx, a); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if a.ID == uuid.Nil {
+		t.Fatal("Create must assign a non-nil ID")
+	}
+
+	got, err := repo.GetByID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.S3Key != "t/doc.pdf" || got.Type != "pdf" {
+		t.Errorf("unexpected artifact: %+v", got)
+	}
+}
+
+func TestMemArtifactRepo_listForSession(t *testing.T) {
+	repo := newMemArtifactRepo()
+	ctx := context.Background()
+	sid := uuid.New()
+
+	for i := range 3 {
+		_ = repo.Create(ctx, &Artifact{SessionID: sid, Type: "summary", S3Key: fmt.Sprintf("k/%d", i)})
+	}
+	// artifact for a different session — must not appear
+	_ = repo.Create(ctx, &Artifact{SessionID: uuid.New(), Type: "pdf", S3Key: "other"})
+
+	list, err := repo.ListForSession(ctx, sid)
+	if err != nil {
+		t.Fatalf("ListForSession: %v", err)
+	}
+	if len(list) != 3 {
+		t.Errorf("expected 3, got %d", len(list))
+	}
+}
+
+func TestMemArtifactRepo_deleteNotFound(t *testing.T) {
+	repo := newMemArtifactRepo()
+	err := repo.Delete(context.Background(), uuid.New())
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestMemArtifactRepo_deleteRemoves(t *testing.T) {
+	repo := newMemArtifactRepo()
+	ctx := context.Background()
+	a := &Artifact{Type: "excel", S3Key: "k/x.xlsx"}
+	_ = repo.Create(ctx, a)
+
+	if err := repo.Delete(ctx, a.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := repo.GetByID(ctx, a.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound after delete, got: %v", err)
+	}
+}
