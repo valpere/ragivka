@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/valpere/ragivka/pkg/tenant"
 )
 
 // GenerateResponseArgs is the River job payload for async LLM generation (Phase 1c).
@@ -33,6 +35,8 @@ func (w *GenerateResponseWorker) Work(_ context.Context, _ *river.Job[GenerateRe
 }
 
 // ExpireSessionsWorker marks timed-out sessions as Expired (FR-7).
+// ListExpired is a cross-tenant query (no tenant in context); each session's own
+// TenantID is injected into context before calling Transition so NFR-16 is preserved.
 type ExpireSessionsWorker struct {
 	river.WorkerDefaults[ExpireSessionsArgs]
 	sessions SessionRepository
@@ -48,7 +52,14 @@ func (w *ExpireSessionsWorker) Work(ctx context.Context, _ *river.Job[ExpireSess
 		return err
 	}
 	for _, s := range expired {
-		if _, err := w.sessions.Transition(ctx, s.ID, s.State, StateExpired, s.Version); err != nil {
+		// Inject this session's tenant so Transition's tenantIDFromCtx succeeds (NFR-16).
+		tctx := tenant.WithTenantID(ctx, s.TenantID.String())
+		_, err := w.sessions.Transition(tctx, s.ID, s.State, StateExpired, s.Version)
+		if errors.Is(err, ErrOptimisticLock) {
+			// Another process already transitioned this session — skip it.
+			continue
+		}
+		if err != nil {
 			return err
 		}
 	}

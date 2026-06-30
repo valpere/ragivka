@@ -62,10 +62,10 @@ func (r *pgSessionRepo) GetActiveByUserID(ctx context.Context, userID uuid.UUID)
 		SELECT id, tenant_id, user_id, state, version, orchestration_tier, channel,
 		       expires_at, created_at, updated_at
 		FROM session
-		WHERE tenant_id = $1 AND user_id = $2 AND state IN ('Active', 'WaitingForHuman')
+		WHERE tenant_id = $1 AND user_id = $2 AND state IN ($3, $4)
 		ORDER BY created_at DESC
 		LIMIT 1`,
-		tenantID, userID).Scan(
+		tenantID, userID, string(StateActive), string(StateWaitingForHuman)).Scan(
 		&s.ID, &s.TenantID, &s.UserID, &s.State, &s.Version,
 		&s.Tier, &s.Channel, &s.ExpiresAt, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -99,12 +99,15 @@ func (r *pgSessionRepo) Transition(ctx context.Context, id uuid.UUID, from, to S
 }
 
 // ListExpired returns all sessions past their expiry that are still in a non-terminal state.
+// This is intentionally a cross-tenant query — the expiry sweep runs for all tenants.
+// Callers must inject each session's own TenantID into context before calling Transition.
 func (r *pgSessionRepo) ListExpired(ctx context.Context) ([]*Session, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, tenant_id, user_id, state, version, orchestration_tier, channel,
 		       expires_at, created_at, updated_at
 		FROM session
-		WHERE expires_at < NOW() AND state IN ('Active', 'WaitingForHuman')`)
+		WHERE expires_at < NOW() AND state IN ($1, $2)`,
+		string(StateActive), string(StateWaitingForHuman))
 	if err != nil {
 		return nil, err
 	}

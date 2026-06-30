@@ -52,6 +52,7 @@ func (r *pgMessageRepo) ListForSession(ctx context.Context, sessionID uuid.UUID,
 	defer rows.Close()
 
 	var msgs []*Message
+	unlimited := maxTokens <= 0
 	budget := maxTokens
 	for rows.Next() {
 		m := &Message{}
@@ -59,7 +60,7 @@ func (r *pgMessageRepo) ListForSession(ctx context.Context, sessionID uuid.UUID,
 			&m.CitationRefs, &m.TokenCount, &m.JobID, &m.CreatedAt); err != nil {
 			return nil, err
 		}
-		if m.TokenCount != nil {
+		if !unlimited && m.TokenCount != nil {
 			budget -= *m.TokenCount
 			if budget < 0 {
 				break
