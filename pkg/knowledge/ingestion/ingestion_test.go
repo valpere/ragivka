@@ -223,11 +223,11 @@ func TestPipeline_failureMarksFailed(t *testing.T) {
 }
 
 func TestPipeline_htmlParserStripsMarkup(t *testing.T) {
-	html := "<html><body><h1>Title</h1><p>Body text with <b>bold</b>.</p></body></html>"
-	connector := &memConnector{data: html}
+	htmlDoc := "<html><body><h1>Title</h1><p>Body text with <b>bold</b>.</p></body></html>"
+	connector := &memConnector{data: htmlDoc}
 	embedder := &memEmbedder{dim: 1024}
 	idxr := &memIndexer{}
-	repo := &memDocRepo{}
+	repo := &memDocRepo{status: knowledge.StatusPending}
 	tenantID := uuid.New()
 	docID := uuid.New()
 
@@ -236,6 +236,29 @@ func TestPipeline_htmlParserStripsMarkup(t *testing.T) {
 	if err := pipeline.Ingest(ctx, docID, "key", "html"); err != nil {
 		t.Fatalf("Ingest HTML: %v", err)
 	}
+	if repo.status != knowledge.StatusReady {
+		t.Errorf("status = %q, want ready", repo.status)
+	}
+}
+
+func TestPipeline_alreadyReadyIsIdempotent(t *testing.T) {
+	connector := &memConnector{data: "should not be read"}
+	embedder := &memEmbedder{dim: 1024}
+	idxr := &memIndexer{}
+	// Document already successfully ingested — pipeline must skip.
+	repo := &memDocRepo{status: knowledge.StatusReady}
+	tenantID := uuid.New()
+	docID := uuid.New()
+
+	pipeline := ingestion.NewPipeline(connector, ingestion.NewRegexScrubber(), embedder, idxr, repo, ingestion.DefaultChunkConfig())
+	ctx := tenant.WithTenantID(context.Background(), tenantID.String())
+	if err := pipeline.Ingest(ctx, docID, "key", "txt"); err != nil {
+		t.Fatalf("Ingest on ready doc should return nil, got: %v", err)
+	}
+	if idxr.indexed != 0 {
+		t.Errorf("expected 0 chunks indexed for already-ready doc, got %d", idxr.indexed)
+	}
+	// Status must remain Ready (not overwritten with Processing).
 	if repo.status != knowledge.StatusReady {
 		t.Errorf("status = %q, want ready", repo.status)
 	}

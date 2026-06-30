@@ -13,6 +13,10 @@ import (
 // Keeps individual requests small enough to avoid timeouts on large models.
 const EmbedBatchSize = 16
 
+// MaxDocumentBytes caps the size of a document read into memory during ingestion.
+// Prevents OOM on unexpectedly large files; 100 MiB covers typical enterprise documents.
+const MaxDocumentBytes = 100 * 1024 * 1024
+
 // Pipeline orchestrates the full ingestion flow (FR-8, FR-9, NFR-18):
 //
 //	Connector → Parser → Chunker → PIIScrubber → Embedder → Indexer
@@ -48,8 +52,19 @@ func NewPipeline(
 
 // Ingest runs the full ingestion pipeline for a single document.
 // It updates the document status to Processing → Ready (or Failed on error).
+// If the document is already Ready it returns nil immediately (idempotent re-run).
 // The document type determines which parser is used.
 func (p *Pipeline) Ingest(ctx context.Context, docID uuid.UUID, s3Key, docType string) error {
+	// Guard: skip if a previous run already completed successfully.
+	// StatusFailed is re-processed (allows retry); StatusProcessing proceeds (stuck-job recovery).
+	doc, err := p.docs.GetByID(ctx, docID)
+	if err != nil {
+		return fmt.Errorf("pipeline: check document status: %w", err)
+	}
+	if doc.Status == knowledge.StatusReady {
+		return nil
+	}
+
 	if err := p.docs.UpdateStatus(ctx, docID, knowledge.StatusProcessing, ""); err != nil {
 		return fmt.Errorf("pipeline: mark processing: %w", err)
 	}
@@ -70,9 +85,12 @@ func (p *Pipeline) ingest(ctx context.Context, docID uuid.UUID, s3Key, docType s
 	}
 	defer func() { _ = rc.Close() }()
 
-	data, err := io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, MaxDocumentBytes+1))
 	if err != nil {
 		return fmt.Errorf("read document: %w", err)
+	}
+	if int64(len(data)) > MaxDocumentBytes {
+		return fmt.Errorf("document exceeds maximum size of %d bytes", MaxDocumentBytes)
 	}
 
 	// Stage 2: Parse to plain text.

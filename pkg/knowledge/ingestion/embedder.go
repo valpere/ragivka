@@ -23,6 +23,10 @@ type OllamaEmbedConfig struct {
 	APIKey string
 	// Model is the embedding model, e.g. "bge-m3:latest" (dim 1024).
 	Model string
+	// ExpectedDim is the expected vector dimension for the model (e.g. 1024 for bge-m3:latest).
+	// When non-zero, Embed validates each returned vector and returns an error on mismatch.
+	// This guards against silent corruption when model config drifts from schema (VECTOR(1024)).
+	ExpectedDim int
 }
 
 type ollamaEmbedder struct {
@@ -98,6 +102,14 @@ func (e *ollamaEmbedder) Embed(ctx context.Context, texts []string) ([][]float32
 	}
 	if len(result.Embeddings) != len(texts) {
 		return nil, fmt.Errorf("embedder: expected %d embeddings, got %d", len(texts), len(result.Embeddings))
+	}
+	if e.cfg.ExpectedDim > 0 {
+		for i, vec := range result.Embeddings {
+			if len(vec) != e.cfg.ExpectedDim {
+				return nil, fmt.Errorf("embedder: vector[%d] has dim %d, expected %d (model=%s)",
+					i, len(vec), e.cfg.ExpectedDim, e.cfg.Model)
+			}
+		}
 	}
 	return result.Embeddings, nil
 }

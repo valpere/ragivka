@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
-	pgvector "github.com/pgvector/pgvector-go"
-	pgxvector "github.com/pgvector/pgvector-go/pgx"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,48 +26,57 @@ func NewIndexer(pool *pgxpool.Pool) Indexer {
 	return &pgIndexer{pool: pool}
 }
 
-// Index bulk-inserts chunks for docID using pgx CopyFrom (FR-9).
+// Index bulk-inserts chunks for docID using pgx SendBatch (FR-9, NFR-4).
+// Uses ON CONFLICT DO NOTHING on (tenant_id, document_id, chunk_index) so that
+// re-running an ingestion job after a partial failure is safe — existing chunks
+// are skipped rather than duplicated.
 // The calling context must carry a tenant ID (NFR-16).
 func (idx *pgIndexer) Index(ctx context.Context, docID uuid.UUID, chunks []knowledge.Chunk) error {
 	if len(chunks) == 0 {
 		return nil
 	}
-	raw, err := tenant.GetTenantID(ctx)
+	tenantID, err := tenantUUIDFromCtx(ctx)
 	if err != nil {
 		return err
 	}
-	tenantID, err := uuid.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("tenant ID not a valid UUID: %w", err)
+
+	const q = `
+INSERT INTO chunk (id, tenant_id, document_id, content, token_count, chunk_index, embedding)
+VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
+ON CONFLICT (tenant_id, document_id, chunk_index) DO NOTHING`
+
+	batch := &pgx.Batch{}
+	for _, c := range chunks {
+		batch.Queue(q, uuid.New(), tenantID, docID, c.Content, c.TokenCount, c.ChunkIndex, vectorLiteral(c.Embedding))
 	}
 
-	conn, err := idx.pool.Acquire(ctx)
-	if err != nil {
-		return fmt.Errorf("indexer: acquire conn: %w", err)
-	}
-	defer conn.Release()
+	results := idx.pool.SendBatch(ctx, batch)
+	defer func() { _ = results.Close() }()
 
-	// Register pgvector types so pgx can encode/decode VECTOR columns.
-	if err := pgxvector.RegisterTypes(ctx, conn.Conn()); err != nil {
-		return fmt.Errorf("indexer: register pgvector types: %w", err)
+	for range chunks {
+		if _, err := results.Exec(); err != nil {
+			return fmt.Errorf("indexer: insert chunk: %w", err)
+		}
 	}
+	return results.Close()
+}
 
-	rows := make([][]any, len(chunks))
-	for i, c := range chunks {
-		vec := pgvector.NewVector(c.Embedding)
-		rows[i] = []any{uuid.New(), tenantID, docID, c.Content, c.TokenCount, c.ChunkIndex, vec}
+// vectorLiteral formats a float32 slice as the PostgreSQL vector literal expected by ::vector.
+// Example: [0.1, 0.2, 0.3] → "[0.1,0.2,0.3]"
+func vectorLiteral(v []float32) string {
+	if len(v) == 0 {
+		return "[]"
 	}
-
-	_, err = conn.Conn().CopyFrom(
-		ctx,
-		pgx.Identifier{"chunk"},
-		[]string{"id", "tenant_id", "document_id", "content", "token_count", "chunk_index", "embedding"},
-		pgx.CopyFromRows(rows),
-	)
-	if err != nil {
-		return fmt.Errorf("indexer: copy chunks: %w", err)
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i, f := range v {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(strconv.FormatFloat(float64(f), 'f', -1, 32))
 	}
-	return nil
+	sb.WriteByte(']')
+	return sb.String()
 }
 
 // DocumentRepository implements knowledge.DocumentRepository using pgx.

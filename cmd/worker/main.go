@@ -77,9 +77,10 @@ func main() {
 		ingestion.NewS3Connector(s3Client),
 		ingestion.NewRegexScrubber(),
 		ingestion.NewOllamaEmbedder(ingestion.OllamaEmbedConfig{
-			APIURL: getenv("OLLAMA_EMBED_URL", "https://ollama.com/api/embed"),
-			APIKey: os.Getenv("OLLAMA_API_KEY"),
-			Model:  getenv("OLLAMA_EMBED_MODEL", "bge-m3:latest"),
+			APIURL:      getenv("OLLAMA_EMBED_URL", "https://ollama.com/api/embed"),
+			APIKey:      os.Getenv("OLLAMA_API_KEY"),
+			Model:       getenv("OLLAMA_EMBED_MODEL", "bge-m3:latest"),
+			ExpectedDim: 1024,
 		}),
 		ingestion.NewIndexer(pool),
 		ingestion.NewDocumentRepository(pool),

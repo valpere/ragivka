@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS chunk (
     CONSTRAINT chunk_tenant_doc_fk
         FOREIGN KEY (tenant_id, document_id)
         REFERENCES document(tenant_id, id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+    -- Uniqueness on (tenant_id, document_id, chunk_index) enforces idempotency: re-running
+    -- an ingestion job with ON CONFLICT DO NOTHING produces no duplicate chunks (NFR-4).
+    CONSTRAINT chunk_tenant_doc_idx_unique UNIQUE (tenant_id, document_id, chunk_index)
 );
 
 -- IVFFlat index for approximate nearest-neighbour search (FR-10).
