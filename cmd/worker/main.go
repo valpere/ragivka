@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/valpere/ragivka/pkg/aicore"
 	"github.com/valpere/ragivka/pkg/db"
 	"github.com/valpere/ragivka/pkg/obs"
 	"github.com/valpere/ragivka/pkg/runtime"
@@ -49,8 +50,17 @@ func main() {
 	}
 	log.Println("Migrations applied")
 
-	// 4. Repository used by ExpireSessionsWorker
+	// 4. Repositories and aicore components (Phase 1c)
 	sessions := runtime.NewSessionRepository(pool)
+	messages := runtime.NewMessageRepository(pool)
+
+	ollamaClient := aicore.NewOllamaClient(aicore.OllamaConfig{
+		APIURL: getenv("OLLAMA_API_URL", "https://ollama.com/api/chat"),
+		APIKey: os.Getenv("OLLAMA_API_KEY"),
+		Model:  getenv("OLLAMA_MODEL", "qwen3.5:cloud"),
+	})
+	router := aicore.NewRouter(ollamaClient, aicore.DefaultPolicy())
+	registry := aicore.NewPromptRegistry(pool)
 
 	// 5. Metrics endpoint (NFR-12)
 	mux := http.NewServeMux()
@@ -77,7 +87,7 @@ func main() {
 	workerErrChan := make(chan error, 1)
 	go func() {
 		log.Println("Starting River worker pool")
-		if err := runtime.StartWorker(ctx, pool, sessions); err != nil {
+		if err := runtime.StartWorker(ctx, pool, sessions, messages, router, registry); err != nil {
 			workerErrChan <- err
 		}
 	}()

@@ -8,14 +8,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/valpere/ragivka/pkg/aicore"
 )
 
 // StartWorker starts the River worker pool and blocks until ctx is cancelled,
 // then performs a graceful shutdown with a 30-second drain window.
 // NFR-7: external API calls (LLM, tools) happen inside worker jobs, outside any DB transaction.
-func StartWorker(ctx context.Context, pool *pgxpool.Pool, sessions SessionRepository) error {
+func StartWorker(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	sessions SessionRepository,
+	messages MessageRepository,
+	router aicore.ModelRouter,
+	registry aicore.PromptRegistry,
+) error {
 	workers := river.NewWorkers()
-	river.AddWorker(workers, &GenerateResponseWorker{})
+	river.AddWorker(workers, NewGenerateResponseWorker(messages, sessions, router, registry))
 	river.AddWorker(workers, NewExpireSessionsWorker(sessions))
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
