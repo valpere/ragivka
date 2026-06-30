@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/valpere/ragivka/pkg/obs"
 	"github.com/valpere/ragivka/pkg/tenant"
 )
 
@@ -99,7 +100,16 @@ func (r *pgHybridRetriever) Retrieve(ctx context.Context, query string, topK int
 		return nil, fmt.Errorf("retriever: rows: %w", err)
 	}
 
-	return r.reranker.Rerank(query, candidates, topK), nil
+	ranked := r.reranker.Rerank(query, candidates, topK)
+
+	// Log Recall@K as the fraction of topK slots filled (NFR-14 offline evaluation hook).
+	recallAtK := 0.0
+	if topK > 0 {
+		recallAtK = float64(len(ranked)) / float64(topK)
+	}
+	obs.LogRetrievalQuality(ctx, tenantID.String(), uuid.New(), topK, recallAtK)
+
+	return ranked, nil
 }
 
 // vectorLiteral formats a float32 slice as a PostgreSQL vector literal for ::vector cast.

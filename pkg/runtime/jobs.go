@@ -159,6 +159,13 @@ func (w *GenerateResponseWorker) Work(ctx context.Context, job *river.Job[Genera
 	// Log cost for per-tenant attribution (NFR-13).
 	obs.LogRequestCost(tctx, args.TenantID.String(), resp.Model, resp.InputTokens, resp.OutputTokens)
 
+	// Log citation coverage: binary proxy for Phase 2 (1.0 if any citations, 0.0 otherwise). NFR-14.
+	coverage := 0.0
+	if len(citationRefs) > 0 {
+		coverage = 1.0
+	}
+	obs.LogCitationCoverage(tctx, args.TenantID.String(), args.SessionID, coverage)
+
 	return nil
 }
 
