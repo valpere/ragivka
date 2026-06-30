@@ -14,6 +14,8 @@ var ErrCacheMiss = errors.New("cache: miss")
 
 // Cache is the read-tool caching abstraction (FR-16).
 // Results are stored as JSON; callers supply TTL per tool type.
+// Keys MUST be tenant-scoped (e.g. "tenantID:toolName:argHash") to prevent
+// cross-tenant data leakage (NFR-16). The Cache itself does not enforce scoping.
 type Cache interface {
 	Get(ctx context.Context, key string) (json.RawMessage, error)
 	Set(ctx context.Context, key string, val json.RawMessage, ttl time.Duration) error

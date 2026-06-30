@@ -240,6 +240,18 @@ func TestHITLGate_zeroThresholdAlwaysPasses(t *testing.T) {
 	}
 }
 
+func TestAuditLogger_Log_writeErrorPropagates(t *testing.T) {
+	db := newMockAuditWriter()
+	db.writeErr = errors.New("db: connection reset")
+	logger := tools.NewAuditLogger(db)
+
+	err := logger.Log(context.Background(), "k", "tool", "t", "s",
+		json.RawMessage(`{}`), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected error when AuditWriter.Write fails, got nil")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // HashJSON
 // ---------------------------------------------------------------------------

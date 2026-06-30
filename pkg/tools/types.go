@@ -18,11 +18,10 @@ const (
 )
 
 var (
-	ErrNotFound       = errors.New("tool: not found")
-	ErrAlreadyExists  = errors.New("tool: already registered")
-	ErrKindViolation  = errors.New("tool: kind violation — caller lacks permission to invoke this tool")
-	ErrAlreadyExecuted = errors.New("tool: idempotency key already executed")
-	ErrHITLRequired   = errors.New("tool: confidence below threshold — HITL approval required")
+	ErrNotFound      = errors.New("tool: not found")
+	ErrAlreadyExists = errors.New("tool: already registered")
+	ErrKindViolation = errors.New("tool: kind violation — caller lacks permission to invoke this tool")
+	ErrHITLRequired  = errors.New("tool: confidence below threshold — HITL approval required")
 )
 
 // Tool is the core abstraction for all agent-callable tools (FR-16, FR-17, FR-18).
