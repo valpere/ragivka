@@ -55,13 +55,23 @@ Interfaces (Telegram, Web Widget)
 - `cmd/server/` — HTTP server (port `$PORT`, default 8080). Exposes `/health` and `/metrics`.
 - `cmd/worker/` — Background River worker (metrics on port `$METRICS_PORT`, default 8081). River integration is stubbed in Phase 1.
 
-### Current implementation state (Phase 1 complete)
+### Current implementation state
 
+**Phase 1a — Observability scaffold (complete):**
 - `pkg/obs/` — OpenTelemetry tracing (`trace.go`), Prometheus metrics (`metrics.go`), per-request cost accounting (`cost.go`). Use `obs.InitTracer`, `obs.LogRequestCost`, `obs.RecordRetrievalLatency`, etc.
 - `pkg/db/` — `pgxpool` connection factory (`db.NewPool`). Uses `url.URL` construction to prevent DSN injection from special characters in credentials.
 - `pkg/tenant/` — Tenant context carrier. `tenant.WithTenantID` injects into context; `tenant.GetTenantID` / `tenant.MustGetTenantID` extracts. Every repository function must call one of these before querying.
+- `cmd/server/` — HTTP server skeleton with `/health` and `/metrics` only.
+- `cmd/worker/` — metrics shell; River worker pool is **stubbed** (no real jobs registered).
 
-Phases 2–4 (RAG pipeline, Tool Layer, Channel Adapters) are not yet implemented. Their planned package locations are `pkg/runtime/`, `pkg/aicore/`, `pkg/knowledge/`, `pkg/channel/`, `pkg/tools/`, `pkg/guardrails/`, `pkg/graph/`.
+**Phase 1b — Session & Job Store (not started):**
+Missing before Phase 1b can begin: SQL migrations (`migrations/`), `pkg/runtime/` package (Session FSM, River integration, HITL gates), River job arg/result types.
+
+**Phase 1c — AI Layer (not started):**
+`pkg/aicore/` — Model Router, Prompt Registry, Structured Output.
+
+**Phases 2–4 (not started):**
+Planned package locations: `pkg/knowledge/`, `pkg/channel/`, `pkg/tools/`, `pkg/guardrails/`, `pkg/graph/`.
 
 ### Critical invariants
 
