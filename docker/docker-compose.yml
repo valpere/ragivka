@@ -43,6 +43,41 @@ services:
       timeout: 3s
       retries: 5
 
+  # MinIO — S3-compatible object storage for local dev (FR-20)
+  # Production: replace with AWS S3 by setting AWS_* env vars and leaving MINIO_ENDPOINT unset.
+  minio:
+    image: minio/minio:latest
+    container_name: ragivka_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MinIO bucket init — creates the default bucket on first start
+  minio-init:
+    image: minio/mc:latest
+    container_name: ragivka_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} &&
+        mc mb --ignore-existing local/ragivka
+      "
+    restart: "no"
+
 volumes:
   postgres_data:
   postgres_wal_archive:
+  minio_data:
