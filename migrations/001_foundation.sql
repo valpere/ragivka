@@ -28,7 +28,10 @@ CREATE TABLE IF NOT EXISTS "user" (
     channel_id   TEXT        NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT user_tenant_channel_unique UNIQUE (tenant_id, channel_type, channel_id)
+    CONSTRAINT user_tenant_channel_unique UNIQUE (tenant_id, channel_type, channel_id),
+    -- Composite unique enables FK from session(tenant_id, user_id) → here, enforcing cross-table tenant isolation.
+    CONSTRAINT user_tenant_id_unique UNIQUE (tenant_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_tenant_id ON "user" (tenant_id);
+-- idx_user_tenant_id removed — user_tenant_channel_unique already creates an index
+-- with tenant_id as prefix, covering WHERE tenant_id = $1 queries.

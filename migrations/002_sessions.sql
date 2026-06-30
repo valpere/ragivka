@@ -3,27 +3,49 @@
 -- FR-23: context window retention enforced by message ordering + token_count.
 
 -- ---------------------------------------------------------------------------
+-- updated_at trigger (shared by SESSION)
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------------------
 -- SESSION
 -- ---------------------------------------------------------------------------
 -- state:              Active | WaitingForHuman | Completed | Expired (FR-5)
 -- version:            optimistic locking — increment on every state transition (FR-6)
 -- orchestration_tier: L0 (single call) | L1 (sync tool) | L2 (async job) | L3 (graph)
--- expires_at:         set by session manager; FSM checks on every message receipt (FR-7)
+-- expires_at:         set by session manager at creation; must be after created_at (FR-7)
 
 CREATE TABLE IF NOT EXISTS session (
     id                  UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
     tenant_id           UUID        NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
-    user_id             UUID        NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    user_id             UUID        NOT NULL,
     state               TEXT        NOT NULL DEFAULT 'Active'
                             CHECK (state IN ('Active', 'WaitingForHuman', 'Completed', 'Expired')),
-    version             INT         NOT NULL DEFAULT 0,
+    version             INT         NOT NULL DEFAULT 0 CHECK (version >= 0),
     orchestration_tier  TEXT        NOT NULL DEFAULT 'L1'
                             CHECK (orchestration_tier IN ('L0', 'L1', 'L2', 'L3')),
     channel             TEXT        NOT NULL, -- 'telegram' | 'web'
-    expires_at          TIMESTAMPTZ NOT NULL,
+    expires_at          TIMESTAMPTZ NOT NULL CHECK (expires_at > created_at),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Composite FK enforces that user_id belongs to the same tenant (NFR-16 defense-in-depth)
+    CONSTRAINT session_user_tenant_fk FOREIGN KEY (tenant_id, user_id)
+        REFERENCES "user"(tenant_id, id) ON DELETE CASCADE,
+    -- Composite unique enables FK from message(tenant_id, session_id) → here
+    CONSTRAINT session_tenant_id_unique UNIQUE (tenant_id, id)
 );
+
+CREATE OR REPLACE TRIGGER session_updated_at
+    BEFORE UPDATE ON session
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
 
 -- Active session lookup: find all sessions for a user within a tenant
 CREATE INDEX IF NOT EXISTS idx_session_tenant_user   ON session (tenant_id, user_id);
@@ -43,14 +65,18 @@ CREATE INDEX IF NOT EXISTS idx_session_tenant_state  ON session (tenant_id, stat
 
 CREATE TABLE IF NOT EXISTS message (
     id            UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
-    session_id    UUID        NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+    session_id    UUID        NOT NULL,
     tenant_id     UUID        NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
     role          TEXT        NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
     content       TEXT        NOT NULL,
     citation_refs UUID[]      NULL,     -- populated in Phase 2 (RAG citations)
     token_count   INT         NULL,     -- null for user messages; set for assistant messages
     job_id        BIGINT      NULL,     -- River job ID; null for synchronous flows
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Composite FK enforces that session_id belongs to the same tenant (NFR-16 defense-in-depth)
+    CONSTRAINT message_session_tenant_fk FOREIGN KEY (tenant_id, session_id)
+        REFERENCES session(tenant_id, id) ON DELETE CASCADE
 );
 
 -- Conversation history retrieval (ordered by created_at within a session)

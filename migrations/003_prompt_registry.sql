@@ -11,9 +11,8 @@ CREATE TABLE IF NOT EXISTS prompt_version (
     content     TEXT        NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- A specific (tenant, name, version) combination must be unique
+    -- A specific (tenant, name, version) combination must be unique.
+    -- PostgreSQL creates a B-tree index on (tenant_id, name, version ASC) for this constraint;
+    -- PG can scan it in reverse for ORDER BY version DESC, so no separate DESC index needed.
     CONSTRAINT prompt_version_unique UNIQUE (tenant_id, name, version)
 );
-
--- Fast lookup by name, returning latest version first
-CREATE INDEX IF NOT EXISTS idx_prompt_version_lookup ON prompt_version (tenant_id, name, version DESC);
