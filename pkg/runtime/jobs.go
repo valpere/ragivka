@@ -3,10 +3,14 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/valpere/ragivka/pkg/aicore"
+	"github.com/valpere/ragivka/pkg/knowledge/retrieval"
 	"github.com/valpere/ragivka/pkg/obs"
 	"github.com/valpere/ragivka/pkg/tenant"
 )
@@ -32,24 +36,28 @@ func (ExpireSessionsArgs) Kind() string { return "expire_sessions" }
 // NFR-7: LLM call is outside any DB transaction.
 type GenerateResponseWorker struct {
 	river.WorkerDefaults[GenerateResponseArgs]
-	messages MessageRepository
-	sessions SessionRepository
-	router   aicore.ModelRouter
-	registry aicore.PromptRegistry
+	messages  MessageRepository
+	sessions  SessionRepository
+	router    aicore.ModelRouter
+	registry  aicore.PromptRegistry
+	retriever retrieval.Retriever // nil = RAG disabled (FR-10, Phase 2c)
 }
 
 // NewGenerateResponseWorker constructs a GenerateResponseWorker with all dependencies.
+// Pass nil for retriever to disable RAG (pre-Phase-2c behaviour).
 func NewGenerateResponseWorker(
 	messages MessageRepository,
 	sessions SessionRepository,
 	router aicore.ModelRouter,
 	registry aicore.PromptRegistry,
+	retriever retrieval.Retriever,
 ) *GenerateResponseWorker {
 	return &GenerateResponseWorker{
-		messages: messages,
-		sessions: sessions,
-		router:   router,
-		registry: registry,
+		messages:  messages,
+		sessions:  sessions,
+		router:    router,
+		registry:  registry,
+		retriever: retriever,
 	}
 }
 
@@ -81,6 +89,25 @@ func (w *GenerateResponseWorker) Work(ctx context.Context, job *river.Job[Genera
 		return err
 	}
 
+	// RAG retrieval (FR-10, FR-11, FR-12): embed the last user query, fetch top-5 chunks,
+	// inject as a system context block. Skipped if retriever is nil or no user message found.
+	var citationRefs []uuid.UUID
+	var retrievedContext string
+	if w.retriever != nil {
+		if userQuery := lastUserMessage(history); userQuery != "" {
+			chunks, rerr := w.retriever.Retrieve(tctx, userQuery, 5, 0.7)
+			if rerr == nil && len(chunks) > 0 {
+				retrievedContext = buildContextBlock(chunks)
+				citationRefs = chunkIDs(chunks)
+			}
+			// Non-fatal: log and continue without RAG context on retrieval error.
+			if rerr != nil {
+				slog.Warn("retrieval failed, proceeding without RAG context",
+					"session_id", args.SessionID, "error", rerr)
+			}
+		}
+	}
+
 	// Load system prompt; missing registry entry is not an error (FR-14).
 	systemPrompt, err := w.registry.LoadLatest(tctx, "default")
 	if err != nil && !errors.Is(err, aicore.ErrPromptNotFound) {
@@ -91,6 +118,9 @@ func (w *GenerateResponseWorker) Work(ctx context.Context, job *river.Job[Genera
 	var msgs []aicore.Message
 	if systemPrompt != "" {
 		msgs = append(msgs, aicore.Message{Role: "system", Content: systemPrompt})
+	}
+	if retrievedContext != "" {
+		msgs = append(msgs, aicore.Message{Role: "system", Content: retrievedContext})
 	}
 	for _, m := range history {
 		content := m.Content
@@ -109,17 +139,18 @@ func (w *GenerateResponseWorker) Work(ctx context.Context, job *river.Job[Genera
 		return err
 	}
 
-	// Save assistant message, linked to this job for idempotency (NFR-4).
+	// Save assistant message with citation refs, linked to this job for idempotency (NFR-4).
 	tokens := resp.OutputTokens
 	jobID := job.ID
 	msg := &Message{
-		ID:         uuid.New(),
-		SessionID:  args.SessionID,
-		TenantID:   args.TenantID,
-		Role:       "assistant",
-		Content:    resp.Content,
-		JobID:      &jobID,
-		TokenCount: &tokens,
+		ID:           uuid.New(),
+		SessionID:    args.SessionID,
+		TenantID:     args.TenantID,
+		Role:         "assistant",
+		Content:      resp.Content,
+		JobID:        &jobID,
+		TokenCount:   &tokens,
+		CitationRefs: citationRefs,
 	}
 	if err := w.messages.Create(tctx, msg); err != nil {
 		return err
@@ -129,6 +160,36 @@ func (w *GenerateResponseWorker) Work(ctx context.Context, job *river.Job[Genera
 	obs.LogRequestCost(tctx, args.TenantID.String(), resp.Model, resp.InputTokens, resp.OutputTokens)
 
 	return nil
+}
+
+// lastUserMessage returns the content of the most recent user turn in history.
+func lastUserMessage(history []*Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "user" {
+			return history[i].Content
+		}
+	}
+	return ""
+}
+
+// buildContextBlock formats retrieved chunks into a system context block (FR-12).
+func buildContextBlock(chunks []retrieval.RankedChunk) string {
+	var sb strings.Builder
+	sb.WriteString("<retrieved_context>\n")
+	for i, c := range chunks {
+		sb.WriteString(fmt.Sprintf("[%d] %s\n\n", i+1, c.Content))
+	}
+	sb.WriteString("</retrieved_context>")
+	return sb.String()
+}
+
+// chunkIDs extracts ChunkIDs from ranked chunks for citation storage (FR-12).
+func chunkIDs(chunks []retrieval.RankedChunk) []uuid.UUID {
+	ids := make([]uuid.UUID, len(chunks))
+	for i, c := range chunks {
+		ids[i] = c.ChunkID
+	}
+	return ids
 }
 
 // ExpireSessionsWorker marks timed-out sessions as Expired (FR-7).
