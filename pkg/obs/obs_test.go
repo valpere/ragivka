@@ -2,6 +2,7 @@ package obs_test
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,6 +61,9 @@ func TestMetricsHandlerHTTP(t *testing.T) {
 	if !strings.Contains(ct, "text/plain") {
 		t.Errorf("expected Content-Type to contain text/plain, got %q", ct)
 	}
+	if body := rr.Body.String(); !strings.Contains(body, "ragivka_") {
+		t.Error("expected /metrics body to contain at least one ragivka_ metric family")
+	}
 }
 
 // TestMetricsHandlerReflectsRecordedData verifies that after calling
@@ -89,6 +93,12 @@ func TestMetricsHandlerReflectsRecordedData(t *testing.T) {
 			t.Errorf("metric %q not found in /metrics output", name)
 		}
 	}
+	// Verify the specific label value recorded in this test appears in the output.
+	// This proves the data was actually recorded (not just that the metric family
+	// exists in the registry from package init or a prior test run).
+	if !strings.Contains(body, `tenant_id="tenant-obs-reflect"`) {
+		t.Error(`label tenant_id="tenant-obs-reflect" not found in /metrics output — recording may have been silently dropped`)
+	}
 }
 
 // TestLogRequestCostUnregisteredModelRegression is a regression test confirming
@@ -99,5 +109,14 @@ func TestLogRequestCostUnregisteredModelRegression(t *testing.T) {
 	cost := obs.LogRequestCost(ctx, "tenant-regression", "totally-unknown-model-xyz", 1000, 500)
 	if cost < 0 {
 		t.Errorf("expected non-negative fallback cost, got %f", cost)
+	}
+	// Verify the fallback is gpt-4o-mini rates: $0.15/1M input + $0.60/1M output.
+	const (
+		inputRatePerToken  = 0.15 / 1_000_000
+		outputRatePerToken = 0.60 / 1_000_000
+	)
+	expectedCost := 1000*inputRatePerToken + 500*outputRatePerToken
+	if math.Abs(cost-expectedCost) > 1e-9 {
+		t.Errorf("expected gpt-4o-mini fallback cost %f, got %f", expectedCost, cost)
 	}
 }
