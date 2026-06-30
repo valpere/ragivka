@@ -10,50 +10,45 @@ import (
 	"github.com/valpere/ragivka/pkg/tenant"
 )
 
-// PDFGenerator renders a PDFData struct into a PDF and stores it (FR-19).
-// The LLM-provided structured data arrives via ParseStructured[PDFData];
-// this generator never touches raw LLM output.
+// PDFGenerator renders a PDFData struct into a PDF and uploads to S3 (FR-19).
+// ARTIFACT row creation is the caller's responsibility (GenerateArtifactWorker).
 type PDFGenerator struct {
 	storage   StorageClient
-	artifacts ArtifactRepository
 	keyPrefix string // e.g. "artifacts/pdf"
 }
 
-func NewPDFGenerator(storage StorageClient, artifacts ArtifactRepository, keyPrefix string) *PDFGenerator {
-	return &PDFGenerator{storage: storage, artifacts: artifacts, keyPrefix: keyPrefix}
+func NewPDFGenerator(storage StorageClient, keyPrefix string) *PDFGenerator {
+	return &PDFGenerator{storage: storage, keyPrefix: keyPrefix}
 }
 
-// Generate renders data into a PDF, uploads to S3, writes an ARTIFACT row.
-// data must be of type PDFData; any other type returns ErrUnsupportedType.
-func (g *PDFGenerator) Generate(ctx context.Context, data any) (string, error) {
+// Generate renders data into a PDF and uploads to S3.
+// Returns the S3 key and byte count.
+// data must be PDFData; any other type returns ErrUnsupportedType.
+// If pd.S3Key is set, it is used as-is (idempotent on River retry).
+// If empty, a UUID-based key is generated (first-run case).
+func (g *PDFGenerator) Generate(ctx context.Context, data any) (string, int, error) {
 	pd, ok := data.(PDFData)
 	if !ok {
-		return "", ErrUnsupportedType
+		return "", 0, ErrUnsupportedType
 	}
 
 	buf, err := renderPDF(pd)
 	if err != nil {
-		return "", fmt.Errorf("pdf: render: %w", err)
+		return "", 0, fmt.Errorf("pdf: render: %w", err)
 	}
 
-	tenantID := tenant.MustGetTenantID(ctx)
-	key := fmt.Sprintf("%s/%s/%s.pdf", g.keyPrefix, tenantID, uuid.New())
+	key := pd.S3Key
+	if key == "" {
+		tenantID := tenant.MustGetTenantID(ctx)
+		key = fmt.Sprintf("%s/%s/%s.pdf", g.keyPrefix, tenantID, uuid.New())
+	}
 
 	stored, err := g.storage.Upload(ctx, key, buf, "application/pdf")
 	if err != nil {
-		return "", fmt.Errorf("pdf: upload: %w", err)
+		return "", 0, fmt.Errorf("pdf: upload: %w", err)
 	}
 
-	if err := g.artifacts.Create(ctx, ArtifactRecord{
-		TenantID:  tenantID,
-		Type:      ArtifactPDF,
-		S3Key:     stored,
-		SizeBytes: len(buf),
-	}); err != nil {
-		return "", fmt.Errorf("pdf: artifact record: %w", err)
-	}
-
-	return stored, nil
+	return stored, len(buf), nil
 }
 
 func renderPDF(pd PDFData) ([]byte, error) {

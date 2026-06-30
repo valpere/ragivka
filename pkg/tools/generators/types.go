@@ -16,11 +16,11 @@ const (
 	ArtifactExcel ArtifactType = "excel"
 )
 
-// Generator renders structured data into a binary artifact and stores it (FR-19).
+// Generator renders structured data into a binary artifact and uploads it to S3 (FR-19).
 // Implementations must never accept raw LLM text — callers pass typed structs.
-// The returned s3Key is the storage path written to the ARTIFACT row.
+// ARTIFACT row creation is the caller's responsibility (see GenerateArtifactWorker).
 type Generator interface {
-	Generate(ctx context.Context, data any) (s3Key string, err error)
+	Generate(ctx context.Context, data any) (s3Key string, sizeBytes int, err error)
 }
 
 // StorageClient abstracts S3-compatible artifact storage (FR-19).
@@ -30,14 +30,13 @@ type StorageClient interface {
 	Upload(ctx context.Context, key string, data []byte, contentType string) (string, error)
 }
 
-// ArtifactRepository writes ARTIFACT rows after successful generation (FR-19).
-// All writes must be tenant-scoped (NFR-16).
+// ArtifactRepository writes ARTIFACT rows after successful upload (FR-19).
+// Owned by GenerateArtifactWorker, not by individual generators (NFR-16: needs SessionID).
 type ArtifactRepository interface {
-	// Create records a generated artifact for a session.
 	Create(ctx context.Context, rec ArtifactRecord) error
 }
 
-// ArtifactRecord is the ARTIFACT table row written after generation (FR-19).
+// ArtifactRecord is the ARTIFACT table row (FR-19).
 type ArtifactRecord struct {
 	TenantID  string
 	SessionID string
@@ -47,10 +46,12 @@ type ArtifactRecord struct {
 }
 
 // PDFData is the structured input for PDFGenerator (FR-19).
-// The LLM provides this via ParseStructured[PDFData]; no raw text reaches the renderer.
+// The LLM provides Title and Sections via ParseStructured[PDFData]; no raw text reaches the renderer.
+// S3Key is set by the caller (GenerateArtifactWorker) to a deterministic value — if empty, a UUID fallback is used.
 type PDFData struct {
 	Title    string
 	Sections []PDFSection
+	S3Key    string `json:"-"` // caller-supplied deterministic S3 key; not from LLM
 }
 
 // PDFSection is a titled block of text within a PDF report.
@@ -60,9 +61,11 @@ type PDFSection struct {
 }
 
 // ExcelData is the structured input for ExcelGenerator (FR-19).
-// Headers and Rows must be provided by the LLM as a typed struct, not raw text.
+// Headers and Rows come from the LLM via ParseStructured[ExcelData]; no raw text reaches the renderer.
+// S3Key is set by the caller (GenerateArtifactWorker) to a deterministic value — if empty, a UUID fallback is used.
 type ExcelData struct {
 	SheetName string
 	Headers   []string
 	Rows      [][]string
+	S3Key     string `json:"-"` // caller-supplied deterministic S3 key; not from LLM
 }

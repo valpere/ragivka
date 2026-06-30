@@ -9,48 +9,46 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// ExcelGenerator renders an ExcelData struct into an XLSX file and stores it (FR-19).
+// ExcelGenerator renders an ExcelData struct into an XLSX file and uploads to S3 (FR-19).
+// ARTIFACT row creation is the caller's responsibility (GenerateArtifactWorker).
 type ExcelGenerator struct {
 	storage   StorageClient
-	artifacts ArtifactRepository
 	keyPrefix string
 }
 
-func NewExcelGenerator(storage StorageClient, artifacts ArtifactRepository, keyPrefix string) *ExcelGenerator {
-	return &ExcelGenerator{storage: storage, artifacts: artifacts, keyPrefix: keyPrefix}
+func NewExcelGenerator(storage StorageClient, keyPrefix string) *ExcelGenerator {
+	return &ExcelGenerator{storage: storage, keyPrefix: keyPrefix}
 }
 
-// Generate renders data into XLSX, uploads to S3, writes an ARTIFACT row.
-// data must be of type ExcelData; any other type returns ErrUnsupportedType.
-func (g *ExcelGenerator) Generate(ctx context.Context, data any) (string, error) {
+// Generate renders data into XLSX and uploads to S3.
+// Returns the S3 key and byte count.
+// data must be ExcelData; any other type returns ErrUnsupportedType.
+// If ed.S3Key is set, it is used as-is (idempotent on River retry).
+// If empty, a UUID-based key is generated (first-run case).
+func (g *ExcelGenerator) Generate(ctx context.Context, data any) (string, int, error) {
 	ed, ok := data.(ExcelData)
 	if !ok {
-		return "", ErrUnsupportedType
+		return "", 0, ErrUnsupportedType
 	}
 
 	buf, err := renderExcel(ed)
 	if err != nil {
-		return "", fmt.Errorf("excel: render: %w", err)
+		return "", 0, fmt.Errorf("excel: render: %w", err)
 	}
 
-	tenantID := tenant.MustGetTenantID(ctx)
-	key := fmt.Sprintf("%s/%s/%s.xlsx", g.keyPrefix, tenantID, uuid.New())
+	key := ed.S3Key
+	if key == "" {
+		tenantID := tenant.MustGetTenantID(ctx)
+		key = fmt.Sprintf("%s/%s/%s.xlsx", g.keyPrefix, tenantID, uuid.New())
+	}
 
-	stored, err := g.storage.Upload(ctx, key, buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	stored, err := g.storage.Upload(ctx, key, buf,
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	if err != nil {
-		return "", fmt.Errorf("excel: upload: %w", err)
+		return "", 0, fmt.Errorf("excel: upload: %w", err)
 	}
 
-	if err := g.artifacts.Create(ctx, ArtifactRecord{
-		TenantID:  tenantID,
-		Type:      ArtifactExcel,
-		S3Key:     stored,
-		SizeBytes: len(buf),
-	}); err != nil {
-		return "", fmt.Errorf("excel: artifact record: %w", err)
-	}
-
-	return stored, nil
+	return stored, len(buf), nil
 }
 
 func renderExcel(ed ExcelData) ([]byte, error) {
@@ -61,11 +59,12 @@ func renderExcel(ed ExcelData) ([]byte, error) {
 	if sheet == "" {
 		sheet = "Sheet1"
 	}
-	idx, err := f.NewSheet(sheet)
-	if err != nil {
+
+	// excelize.NewFile() already creates "Sheet1". Rename it rather than creating
+	// a duplicate, which would produce an unintended second sheet.
+	if err := f.SetSheetName("Sheet1", sheet); err != nil {
 		return nil, err
 	}
-	f.SetActiveSheet(idx)
 
 	for col, header := range ed.Headers {
 		cell, _ := excelize.CoordinatesToCellName(col+1, 1)
@@ -89,4 +88,3 @@ func renderExcel(ed ExcelData) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
-
