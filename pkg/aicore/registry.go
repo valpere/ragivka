@@ -60,8 +60,13 @@ func (r *pgPromptRegistry) LoadLatest(ctx context.Context, name string) (string,
 }
 
 // tenantUUIDFromCtx extracts and parses the tenant ID from ctx.
+// Uses GetTenantID (returns error) rather than MustGetTenantID (panics) so
+// callers receive a proper error instead of a panic on missing tenant.
 func tenantUUIDFromCtx(ctx context.Context) (uuid.UUID, error) {
-	raw := tenant.MustGetTenantID(ctx)
+	raw, err := tenant.GetTenantID(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	id, err := uuid.Parse(raw)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("tenant ID in context is not a valid UUID: %w", err)

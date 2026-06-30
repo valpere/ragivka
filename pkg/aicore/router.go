@@ -54,6 +54,7 @@ func (r *defaultRouter) Generate(ctx context.Context, req GenerateRequest) (Gene
 		if fallbackErr != nil {
 			return GenerateResponse{}, fmt.Errorf("primary (%w) and fallback: %v", err, fallbackErr)
 		}
+		return resp, nil // fallback succeeded — primary error is irrelevant
 	}
 	return resp, err
 }

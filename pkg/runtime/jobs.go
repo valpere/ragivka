@@ -66,6 +66,15 @@ func (w *GenerateResponseWorker) Work(ctx context.Context, job *river.Job[Genera
 		return nil
 	}
 
+	// FSM guard: skip LLM call if session reached a terminal state since job enqueue.
+	session, err := w.sessions.GetByID(tctx, args.SessionID)
+	if err != nil {
+		return err
+	}
+	if session.State == StateCompleted || session.State == StateExpired {
+		return nil
+	}
+
 	// Load conversation history with a 4096-token budget (FR-23).
 	history, err := w.messages.ListForSession(tctx, args.SessionID, 4096)
 	if err != nil {
@@ -78,16 +87,17 @@ func (w *GenerateResponseWorker) Work(ctx context.Context, job *river.Job[Genera
 		return err
 	}
 
-	// Build LLM message list with sanitized user content (NFR-17).
+	// Build LLM message list; sanitize only user content — not assistant/system (NFR-17).
 	var msgs []aicore.Message
 	if systemPrompt != "" {
 		msgs = append(msgs, aicore.Message{Role: "system", Content: systemPrompt})
 	}
 	for _, m := range history {
-		msgs = append(msgs, aicore.Message{
-			Role:    m.Role,
-			Content: aicore.SanitizeInput(m.Content),
-		})
+		content := m.Content
+		if m.Role == "user" {
+			content = aicore.SanitizeInput(content)
+		}
+		msgs = append(msgs, aicore.Message{Role: m.Role, Content: content})
 	}
 
 	// Call LLM via router (FR-13). No DB transaction is open here (NFR-7).
