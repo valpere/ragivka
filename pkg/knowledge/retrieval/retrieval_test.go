@@ -214,6 +214,28 @@ func TestRetriever_emptyResultsReturnsNil(t *testing.T) {
 	}
 }
 
+// REGRESSION: embedder returning empty vecs slice must error, not panic on vecs[0].
+func TestRetriever_emptyEmbedVecsReturnsError(t *testing.T) {
+	q := &mockQuerier{rows: &mockQueryRows{}}
+	e := &mockEmbedder{vec: nil} // Embed returns [][]float32{nil} — outer slice len=1, inner nil
+	r := retrieval.NewRetrieverFromQuerier(q, e, retrieval.NewDotProductReranker())
+	_, err := r.Retrieve(ctxWithTenant(), "q", 5, 0.7)
+	if err == nil {
+		t.Fatal("expected error for empty embed vector, got nil")
+	}
+}
+
+// REGRESSION: embedder returning zero-length inner vector must error, not produce a bad ::vector cast.
+func TestRetriever_zeroLenInnerVecReturnsError(t *testing.T) {
+	q := &mockQuerier{rows: &mockQueryRows{}}
+	e := &mockEmbedder{vec: []float32{}} // non-nil but len=0
+	r := retrieval.NewRetrieverFromQuerier(q, e, retrieval.NewDotProductReranker())
+	_, err := r.Retrieve(ctxWithTenant(), "q", 5, 0.7)
+	if err == nil {
+		t.Fatal("expected error for zero-length embed vector, got nil")
+	}
+}
+
 func TestRetriever_alphaOneVectorFirst(t *testing.T) {
 	rows := []mockRow{
 		{uuid.New(), uuid.New(), "vec-high", 0.95, 0.1},

@@ -24,6 +24,8 @@ type Retriever interface {
 // Reranker reorders a candidate set using a secondary scoring pass (FR-11).
 // Phase 2: dot-product rescore on VecScore.
 // Phase 3: replace with a full cross-encoder without changing the interface.
+//
+// Rerank MAY sort candidates in place; callers must not reuse the slice after this call.
 type Reranker interface {
 	Rerank(query string, candidates []RankedChunk, topK int) []RankedChunk
 }

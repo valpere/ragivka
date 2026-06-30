@@ -70,6 +70,9 @@ func (r *pgHybridRetriever) Retrieve(ctx context.Context, query string, topK int
 	if err != nil {
 		return nil, fmt.Errorf("retriever: embed query: %w", err)
 	}
+	if len(vecs) == 0 || len(vecs[0]) == 0 {
+		return nil, fmt.Errorf("retriever: embedder returned empty vector for query")
+	}
 	queryVec := vectorLiteral(vecs[0])
 
 	candidateK := topK * 2
