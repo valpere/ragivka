@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -130,9 +134,13 @@ func newMemArtifactRepo() *memArtifactRepository {
 	return &memArtifactRepository{artifacts: map[uuid.UUID]*Artifact{}}
 }
 
-func (m *memArtifactRepository) Create(_ context.Context, a *Artifact) error {
+func (m *memArtifactRepository) Create(ctx context.Context, a *Artifact) error {
 	if a.ID == uuid.Nil {
 		a.ID = uuid.New()
+	}
+	// Best-effort: if context carries a valid tenant UUID, stamp the artifact (NFR-16).
+	if tid, err := tenantUUIDFromCtx(ctx); err == nil {
+		a.TenantID = tid
 	}
 	cp := *a
 	m.mu.Lock()
@@ -141,26 +149,39 @@ func (m *memArtifactRepository) Create(_ context.Context, a *Artifact) error {
 	return nil
 }
 
-func (m *memArtifactRepository) GetByID(_ context.Context, id uuid.UUID) (*Artifact, error) {
+func (m *memArtifactRepository) GetByID(ctx context.Context, id uuid.UUID) (*Artifact, error) {
 	m.mu.RLock()
 	a, ok := m.artifacts[id]
 	m.mu.RUnlock()
 	if !ok {
 		return nil, ErrNotFound
 	}
+	// Enforce tenant isolation when the context carries a valid tenant UUID (NFR-16).
+	// Skip check when tenant is absent (allows use in tests that don't set tenant context).
+	if tid, err := tenantUUIDFromCtx(ctx); err == nil && a.TenantID != uuid.Nil {
+		if a.TenantID != tid {
+			return nil, ErrNotFound
+		}
+	}
 	cp := *a
 	return &cp, nil
 }
 
-func (m *memArtifactRepository) ListForSession(_ context.Context, sessionID uuid.UUID) ([]*Artifact, error) {
+func (m *memArtifactRepository) ListForSession(ctx context.Context, sessionID uuid.UUID) ([]*Artifact, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var out []*Artifact
+	tid, tenantErr := tenantUUIDFromCtx(ctx)
+	out := make([]*Artifact, 0) // always non-nil so callers can range safely
 	for _, a := range m.artifacts {
-		if a.SessionID == sessionID {
-			cp := *a
-			out = append(out, &cp)
+		if a.SessionID != sessionID {
+			continue
 		}
+		// Mirror GetByID: enforce tenant when context carries a valid UUID and artifact has a non-nil TenantID (NFR-16).
+		if tenantErr == nil && a.TenantID != uuid.Nil && a.TenantID != tid {
+			continue
+		}
+		cp := *a
+		out = append(out, &cp)
 	}
 	return out, nil
 }
@@ -241,5 +262,164 @@ func TestMemArtifactRepo_deleteRemoves(t *testing.T) {
 	}
 	if _, err := repo.GetByID(ctx, a.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound after delete, got: %v", err)
+	}
+}
+
+// TestMemArtifactRepo_tenantIsolation verifies that an artifact created under
+// tenant A cannot be retrieved with a context bearing tenant B (NFR-16).
+func TestMemArtifactRepo_tenantIsolation(t *testing.T) {
+	repo := newMemArtifactRepo()
+	tenantA := uuid.New()
+	tenantB := uuid.New()
+	ctxA := withTenant(tenantA)
+	ctxB := withTenant(tenantB)
+
+	a := &Artifact{SessionID: uuid.New(), Type: "pdf", S3Key: "ta/doc.pdf"}
+	if err := repo.Create(ctxA, a); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Tenant B must not see tenant A's artifact.
+	_, err := repo.GetByID(ctxB, a.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for wrong tenant, got: %v", err)
+	}
+
+	// Tenant A can still retrieve its own artifact.
+	got, err := repo.GetByID(ctxA, a.ID)
+	if err != nil {
+		t.Fatalf("GetByID with correct tenant: %v", err)
+	}
+	if got.ID != a.ID {
+		t.Errorf("unexpected artifact ID: %v", got.ID)
+	}
+}
+
+// TestMemArtifactRepo_listEmpty verifies that ListForSession returns an empty
+// (non-nil) slice when no artifacts exist for the requested session.
+func TestMemArtifactRepo_listEmpty(t *testing.T) {
+	repo := newMemArtifactRepo()
+	list, err := repo.ListForSession(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("ListForSession: %v", err)
+	}
+	if list == nil {
+		t.Error("expected non-nil empty slice, got nil")
+	}
+	if len(list) != 0 {
+		t.Errorf("expected 0 artifacts, got %d", len(list))
+	}
+}
+
+// TestMemArtifactRepo_listForSessionTenantIsolation verifies that ListForSession
+// with tenant B's context does not return artifacts created by tenant A (NFR-16).
+func TestMemArtifactRepo_listForSessionTenantIsolation(t *testing.T) {
+	repo := newMemArtifactRepo()
+	tenantA := uuid.New()
+	tenantB := uuid.New()
+	ctxA := withTenant(tenantA)
+	ctxB := withTenant(tenantB)
+	sid := uuid.New()
+
+	_ = repo.Create(ctxA, &Artifact{SessionID: sid, Type: "pdf", S3Key: "a/doc.pdf"})
+	_ = repo.Create(ctxA, &Artifact{SessionID: sid, Type: "summary", S3Key: "a/sum.txt"})
+
+	// Tenant B must not see tenant A's artifacts in the same session.
+	list, err := repo.ListForSession(ctxB, sid)
+	if err != nil {
+		t.Fatalf("ListForSession(ctxB): %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected 0 artifacts for tenant B, got %d", len(list))
+	}
+
+	// Tenant A sees its own artifacts.
+	list, err = repo.ListForSession(ctxA, sid)
+	if err != nil {
+		t.Fatalf("ListForSession(ctxA): %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("expected 2 artifacts for tenant A, got %d", len(list))
+	}
+}
+
+// TestS3Client_putObject verifies that PutObject sends a PUT request to the
+// configured endpoint and returns no error on a 200 response.
+func TestS3Client_putObject(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("expected PUT method, got %s", r.Method)
+		}
+		// Consume body so the SDK does not see a broken connection.
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("ETag", `"test-etag"`)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	cl := NewS3Client(S3Config{
+		Bucket:          "test-bucket",
+		Region:          "us-east-1",
+		Endpoint:        ts.URL,
+		UsePathStyle:    true,
+		AccessKeyID:     "test",
+		SecretAccessKey: "test",
+	})
+
+	content := []byte("hello storage")
+	err := cl.PutObject(context.Background(), "my-key", bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+}
+
+// TestS3Client_presignURL verifies that PresignURL returns a parseable,
+// non-empty URL. The AWS SDK generates the pre-signed URL locally so no
+// HTTP call is made.
+func TestS3Client_presignURL(t *testing.T) {
+	cl := NewS3Client(S3Config{
+		Bucket:          "test-bucket",
+		Region:          "us-east-1",
+		Endpoint:        "http://localhost:9000",
+		UsePathStyle:    true,
+		AccessKeyID:     "test",
+		SecretAccessKey: "test",
+	})
+
+	got, err := cl.PresignURL(context.Background(), "my-key", time.Hour)
+	if err != nil {
+		t.Fatalf("PresignURL: %v", err)
+	}
+	if got == "" {
+		t.Fatal("expected non-empty presigned URL")
+	}
+	if _, err := url.Parse(got); err != nil {
+		t.Errorf("presigned URL is not a valid URL: %v", err)
+	}
+}
+
+// TestS3Client_usePathStyle verifies that with UsePathStyle=true the bucket
+// name appears as a path segment in the generated URL rather than a subdomain.
+func TestS3Client_usePathStyle(t *testing.T) {
+	cl := NewS3Client(S3Config{
+		Bucket:          "test-bucket",
+		Region:          "us-east-1",
+		Endpoint:        "http://localhost:9000",
+		UsePathStyle:    true,
+		AccessKeyID:     "test",
+		SecretAccessKey: "test",
+	})
+
+	got, err := cl.PresignURL(context.Background(), "some-key", time.Minute)
+	if err != nil {
+		t.Fatalf("PresignURL: %v", err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
+	// Path-style URL: <endpoint>/<bucket>/<key>?...
+	if !strings.HasPrefix(u.Path, "/test-bucket/") {
+		t.Errorf("expected URL path to start with /test-bucket/, got: %q (full URL: %s)", u.Path, got)
 	}
 }
