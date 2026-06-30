@@ -47,6 +47,16 @@ var defaultPricingRegistry = map[string]ModelPricing{
 		InputRate:  0.55,
 		OutputRate: 2.19,
 	},
+	// Ollama-hosted models billed via subscription, not per-token.
+	// Zero rates ensure LogRequestCost tracks usage without inflated cost estimates.
+	"qwen3.5:cloud": {
+		InputRate:  0.0,
+		OutputRate: 0.0,
+	},
+	"bge-m3:latest": {
+		InputRate:  0.0,
+		OutputRate: 0.0,
+	},
 }
 
 var fallbackPricing = ModelPricing{

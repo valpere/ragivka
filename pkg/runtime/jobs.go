@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
+	"github.com/valpere/ragivka/pkg/aicore"
+	"github.com/valpere/ragivka/pkg/obs"
 	"github.com/valpere/ragivka/pkg/tenant"
 )
 
@@ -25,12 +27,97 @@ type ExpireSessionsArgs struct{}
 
 func (ExpireSessionsArgs) Kind() string { return "expire_sessions" }
 
-// GenerateResponseWorker is a stub — real implementation in Phase 1c (pkg/aicore).
+// GenerateResponseWorker calls the LLM router to produce an assistant reply (FR-13, Phase 1c).
+// NFR-4/NFR-15: checks GetByJobID before generating to prevent double-execution.
+// NFR-7: LLM call is outside any DB transaction.
 type GenerateResponseWorker struct {
 	river.WorkerDefaults[GenerateResponseArgs]
+	messages MessageRepository
+	sessions SessionRepository
+	router   aicore.ModelRouter
+	registry aicore.PromptRegistry
 }
 
-func (w *GenerateResponseWorker) Work(_ context.Context, _ *river.Job[GenerateResponseArgs]) error {
+// NewGenerateResponseWorker constructs a GenerateResponseWorker with all dependencies.
+func NewGenerateResponseWorker(
+	messages MessageRepository,
+	sessions SessionRepository,
+	router aicore.ModelRouter,
+	registry aicore.PromptRegistry,
+) *GenerateResponseWorker {
+	return &GenerateResponseWorker{
+		messages: messages,
+		sessions: sessions,
+		router:   router,
+		registry: registry,
+	}
+}
+
+func (w *GenerateResponseWorker) Work(ctx context.Context, job *river.Job[GenerateResponseArgs]) error {
+	args := job.Args
+	tctx := tenant.WithTenantID(ctx, args.TenantID.String())
+
+	// Idempotency check: if this job already produced a message, skip (NFR-4/NFR-15).
+	existing, err := w.messages.GetByJobID(tctx, job.ID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+
+	// Load conversation history with a 4096-token budget (FR-23).
+	history, err := w.messages.ListForSession(tctx, args.SessionID, 4096)
+	if err != nil {
+		return err
+	}
+
+	// Load system prompt; missing registry entry is not an error (FR-14).
+	systemPrompt, err := w.registry.LoadLatest(tctx, "default")
+	if err != nil && !errors.Is(err, aicore.ErrPromptNotFound) {
+		return err
+	}
+
+	// Build LLM message list with sanitized user content (NFR-17).
+	var msgs []aicore.Message
+	if systemPrompt != "" {
+		msgs = append(msgs, aicore.Message{Role: "system", Content: systemPrompt})
+	}
+	for _, m := range history {
+		msgs = append(msgs, aicore.Message{
+			Role:    m.Role,
+			Content: aicore.SanitizeInput(m.Content),
+		})
+	}
+
+	// Call LLM via router (FR-13). No DB transaction is open here (NFR-7).
+	resp, err := w.router.Generate(tctx, aicore.GenerateRequest{
+		Messages: msgs,
+		TaskHint: aicore.TaskGeneration,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Save assistant message, linked to this job for idempotency (NFR-4).
+	tokens := resp.OutputTokens
+	jobID := job.ID
+	msg := &Message{
+		ID:         uuid.New(),
+		SessionID:  args.SessionID,
+		TenantID:   args.TenantID,
+		Role:       "assistant",
+		Content:    resp.Content,
+		JobID:      &jobID,
+		TokenCount: &tokens,
+	}
+	if err := w.messages.Create(tctx, msg); err != nil {
+		return err
+	}
+
+	// Log cost for per-tenant attribution (NFR-13).
+	obs.LogRequestCost(tctx, args.TenantID.String(), resp.Model, resp.InputTokens, resp.OutputTokens)
+
 	return nil
 }
 
