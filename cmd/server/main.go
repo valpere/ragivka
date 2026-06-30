@@ -49,11 +49,7 @@ func main() {
 	}
 	log.Println("Migrations applied")
 
-	// 4. Repositories
-	_ = runtime.NewSessionRepository(pool)
-	_ = runtime.NewMessageRepository(pool)
-
-	// 5. HTTP server with /health, /metrics, and POST /v1/sessions/{id}/messages (NFR-12, FR-1/2/3)
+	// 4. HTTP server with /health, /metrics, and POST /v1/sessions/{id}/messages (NFR-12, FR-1/2/3)
 	// Full orchestrator wiring (LLM router, retriever, River enqueuer) is deferred to Phase 3+.
 	// The endpoint is registered now and returns 503 until AI layer is wired.
 	mux := http.NewServeMux()

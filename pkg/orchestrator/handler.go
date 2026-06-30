@@ -30,6 +30,7 @@ func NewMessageHandler(orch Orchestrator) http.Handler {
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB request body cap
 		var req MessageRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
 			http.Error(w, "invalid request body", http.StatusBadRequest)

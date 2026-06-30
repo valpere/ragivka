@@ -36,14 +36,13 @@ func (o *TieredOrchestrator) Run(ctx context.Context, sessionID uuid.UUID, userM
 	}
 
 	tctx := tenant.WithTenantID(ctx, session.TenantID.String())
-	_ = tctx // handlers call tenant.WithTenantID themselves from session.TenantID
 
 	handler, err := o.handlerFor(session.Tier)
 	if err != nil {
 		return err
 	}
 
-	return handler.Handle(ctx, session, userMessage)
+	return handler.Handle(tctx, session, userMessage)
 }
 
 func (o *TieredOrchestrator) handlerFor(tier runtime.Tier) (Handler, error) {

@@ -259,7 +259,7 @@ func TestL2Handler_Handle_savesUserMessageAndEnqueues(t *testing.T) {
 	messages := &mockMessages{}
 	enqueuer := &mockEnqueuer{}
 
-	h := orchestrator.NewL2Handler(nil, newMockSessions(sess), messages, enqueuer)
+	h := orchestrator.NewL2Handler(newMockSessions(sess), messages, enqueuer)
 	if err := h.Handle(tenantCtxFor(sess), sess, "start workflow"); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestL2Handler_Handle_savesUserMessageAndEnqueues(t *testing.T) {
 func TestL2Handler_Handle_enqueueErrorPropagates(t *testing.T) {
 	sess := tenantSession(runtime.TierL2)
 	h := orchestrator.NewL2Handler(
-		nil, newMockSessions(sess), &mockMessages{},
+		newMockSessions(sess), &mockMessages{},
 		&mockEnqueuer{err: errors.New("river: unavailable")},
 	)
 	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err == nil {
@@ -319,7 +319,7 @@ func TestOrchestrator_Run_dispatchesByTier(t *testing.T) {
 				sessions,
 				orchestrator.NewL0Handler(router, sessions, messages),
 				orchestrator.NewL1Handler(router, sessions, messages, retriever),
-				orchestrator.NewL2Handler(nil, sessions, messages, enqueuer),
+				orchestrator.NewL2Handler(sessions, messages, enqueuer),
 			)
 
 			ctx := tenant.WithTenantID(context.Background(), sess.TenantID.String())
@@ -344,7 +344,7 @@ func TestOrchestrator_Run_unknownSessionReturnsError(t *testing.T) {
 		sessions,
 		orchestrator.NewL0Handler(router, sessions, messages),
 		orchestrator.NewL1Handler(router, sessions, messages, &mockRetriever{}),
-		orchestrator.NewL2Handler(nil, sessions, messages, &mockEnqueuer{}),
+		orchestrator.NewL2Handler(sessions, messages, &mockEnqueuer{}),
 	)
 	ctx := tenant.WithTenantID(context.Background(), uuid.New().String())
 	if err := orch.Run(ctx, uuid.New(), "test"); err == nil {
@@ -401,12 +401,100 @@ func TestMessageHandler_orchestratorError_returns500(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Additional error-path tests
+// ---------------------------------------------------------------------------
+
+func TestL0Handler_Handle_listForSessionErrorPropagates(t *testing.T) {
+	sess := tenantSession(runtime.TierL0)
+	messages := &errorOnListMessages{err: errors.New("db: connection lost")}
+	h := orchestrator.NewL0Handler(&mockRouter{response: "ok"}, newMockSessions(sess), messages)
+	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err == nil {
+		t.Error("expected error when ListForSession fails, got nil")
+	}
+}
+
+func TestL1Handler_Handle_listForSessionErrorPropagates(t *testing.T) {
+	sess := tenantSession(runtime.TierL1)
+	messages := &errorOnListMessages{err: errors.New("db: connection lost")}
+	h := orchestrator.NewL1Handler(
+		&mockRouter{response: "ok"},
+		newMockSessions(sess),
+		messages,
+		&mockRetriever{chunks: []retrieval.RankedChunk{{ChunkID: uuid.New(), Content: "ctx"}}},
+	)
+	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err == nil {
+		t.Error("expected error when ListForSession fails, got nil")
+	}
+}
+
+func TestL2Handler_Handle_createUserMessageErrorPropagates(t *testing.T) {
+	sess := tenantSession(runtime.TierL2)
+	messages := &errorOnCreateMessages{err: errors.New("db: insert failed")}
+	h := orchestrator.NewL2Handler(newMockSessions(sess), messages, &mockEnqueuer{})
+	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err == nil {
+		t.Error("expected error when message Create fails, got nil")
+	}
+}
+
+func TestMessageHandler_emptyMessage_returns400(t *testing.T) {
+	h := orchestrator.NewMessageHandler(&stubOrchestrator{})
+	body := strings.NewReader(`{"message":""}`)
+	r := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+uuid.New().String()+"/messages", body)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty message, got %d", w.Code)
+	}
+}
+
+func TestOrchestrator_Run_unknownTierReturnsError(t *testing.T) {
+	sess := tenantSession("unknown-tier")
+	sessions := newMockSessions(sess)
+	messages := &mockMessages{}
+	router := &mockRouter{}
+	orch := orchestrator.NewTieredOrchestrator(
+		sessions,
+		orchestrator.NewL0Handler(router, sessions, messages),
+		orchestrator.NewL1Handler(router, sessions, messages, &mockRetriever{}),
+		orchestrator.NewL2Handler(sessions, messages, &mockEnqueuer{}),
+	)
+	ctx := tenant.WithTenantID(context.Background(), sess.TenantID.String())
+	if err := orch.Run(ctx, sess.ID, "test"); err == nil {
+		t.Error("expected error for unknown tier, got nil")
+	}
+}
+
+// errorOnListMessages returns an error only on ListForSession; Create succeeds.
+type errorOnListMessages struct {
+	mockMessages
+	err error
+}
+
+func (m *errorOnListMessages) ListForSession(_ context.Context, _ uuid.UUID, _ int) ([]*runtime.Message, error) {
+	return nil, m.err
+}
+
+// errorOnCreateMessages returns an error on Create.
+type errorOnCreateMessages struct {
+	err error
+}
+
+func (m *errorOnCreateMessages) Create(_ context.Context, _ *runtime.Message) error { return m.err }
+func (m *errorOnCreateMessages) ListForSession(_ context.Context, _ uuid.UUID, _ int) ([]*runtime.Message, error) {
+	return nil, nil
+}
+func (m *errorOnCreateMessages) GetByJobID(_ context.Context, _ int64) (*runtime.Message, error) {
+	return nil, runtime.ErrNotFound
+}
+
+// ---------------------------------------------------------------------------
+
 type stubOrchestrator struct {
 	err error
 }
 
 func (s *stubOrchestrator) Run(_ context.Context, _ uuid.UUID, _ string) error {
-	// Simulate some work.
 	time.Sleep(0)
 	return s.err
 }

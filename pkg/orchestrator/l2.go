@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/valpere/ragivka/pkg/aicore"
 	"github.com/valpere/ragivka/pkg/runtime"
 	"github.com/valpere/ragivka/pkg/tenant"
 )
@@ -18,13 +17,11 @@ type L2Handler struct {
 }
 
 func NewL2Handler(
-	router aicore.ModelRouter,
 	sessions runtime.SessionRepository,
 	messages runtime.MessageRepository,
 	enqueuer JobEnqueuer,
 ) *L2Handler {
 	return &L2Handler{deps: deps{
-		router:   router,
 		sessions: sessions,
 		messages: messages,
 		enqueuer: enqueuer,
