@@ -13,6 +13,7 @@ import (
 	"github.com/valpere/ragivka/pkg/aicore"
 	"github.com/valpere/ragivka/pkg/db"
 	"github.com/valpere/ragivka/pkg/knowledge/ingestion"
+	"github.com/valpere/ragivka/pkg/knowledge/retrieval"
 	"github.com/valpere/ragivka/pkg/obs"
 	"github.com/valpere/ragivka/pkg/runtime"
 	"github.com/valpere/ragivka/pkg/storage"
@@ -88,7 +89,17 @@ func main() {
 	)
 	ingestWorker := ingestion.NewIngestDocumentWorker(ingestPipeline)
 
-	// 6. Metrics endpoint (NFR-12)
+	// 6. Retrieval engine (Phase 2c, FR-10, FR-11, FR-12)
+	// Shares the same bge-m3 embedder used by ingestion so vectors are in the same space.
+	embedder := ingestion.NewOllamaEmbedder(ingestion.OllamaEmbedConfig{
+		APIURL:      getenv("OLLAMA_EMBED_URL", "https://ollama.com/api/embed"),
+		APIKey:      os.Getenv("OLLAMA_API_KEY"),
+		Model:       getenv("OLLAMA_EMBED_MODEL", "bge-m3:latest"),
+		ExpectedDim: 1024,
+	})
+	retriever := retrieval.NewRetriever(pool, embedder, retrieval.NewDotProductReranker())
+
+	// 7. Metrics endpoint (NFR-12)
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", obs.MetricsHandler())
 
@@ -109,11 +120,11 @@ func main() {
 		}
 	}()
 
-	// 7. River worker pool — blocks until ctx is cancelled, then drains gracefully (NFR-7)
+	// 8. River worker pool — blocks until ctx is cancelled, then drains gracefully (NFR-7)
 	workerErrChan := make(chan error, 1)
 	go func() {
 		log.Println("Starting River worker pool")
-		if err := runtime.StartWorker(ctx, pool, sessions, messages, router, registry, ingestWorker); err != nil {
+		if err := runtime.StartWorker(ctx, pool, sessions, messages, router, registry, ingestWorker, retriever); err != nil {
 			workerErrChan <- err
 		}
 	}()

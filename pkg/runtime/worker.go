@@ -10,6 +10,7 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/valpere/ragivka/pkg/aicore"
 	"github.com/valpere/ragivka/pkg/knowledge/ingestion"
+	"github.com/valpere/ragivka/pkg/knowledge/retrieval"
 )
 
 // StartWorker starts the River worker pool and blocks until ctx is cancelled,
@@ -23,9 +24,10 @@ func StartWorker(
 	router aicore.ModelRouter,
 	registry aicore.PromptRegistry,
 	ingestWorker *ingestion.IngestDocumentWorker,
+	retriever retrieval.Retriever,
 ) error {
 	workers := river.NewWorkers()
-	river.AddWorker(workers, NewGenerateResponseWorker(messages, sessions, router, registry))
+	river.AddWorker(workers, NewGenerateResponseWorker(messages, sessions, router, registry, retriever))
 	river.AddWorker(workers, NewExpireSessionsWorker(sessions))
 	river.AddWorker(workers, ingestWorker)
 
