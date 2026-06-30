@@ -1,3 +1,4 @@
+-- +goose Up
 -- Phase 1b: SESSION and MESSAGE
 -- FR-5: FSM with four states. FR-6: optimistic locking via version. FR-7: expiry.
 -- FR-23: context window retention enforced by message ordering + token_count.
