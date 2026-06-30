@@ -167,15 +167,21 @@ func (m *memArtifactRepository) GetByID(ctx context.Context, id uuid.UUID) (*Art
 	return &cp, nil
 }
 
-func (m *memArtifactRepository) ListForSession(_ context.Context, sessionID uuid.UUID) ([]*Artifact, error) {
+func (m *memArtifactRepository) ListForSession(ctx context.Context, sessionID uuid.UUID) ([]*Artifact, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	tid, tenantErr := tenantUUIDFromCtx(ctx)
 	out := make([]*Artifact, 0) // always non-nil so callers can range safely
 	for _, a := range m.artifacts {
-		if a.SessionID == sessionID {
-			cp := *a
-			out = append(out, &cp)
+		if a.SessionID != sessionID {
+			continue
 		}
+		// Mirror GetByID: enforce tenant when context carries a valid UUID and artifact has a non-nil TenantID (NFR-16).
+		if tenantErr == nil && a.TenantID != uuid.Nil && a.TenantID != tid {
+			continue
+		}
+		cp := *a
+		out = append(out, &cp)
 	}
 	return out, nil
 }
@@ -305,10 +311,45 @@ func TestMemArtifactRepo_listEmpty(t *testing.T) {
 	}
 }
 
+// TestMemArtifactRepo_listForSessionTenantIsolation verifies that ListForSession
+// with tenant B's context does not return artifacts created by tenant A (NFR-16).
+func TestMemArtifactRepo_listForSessionTenantIsolation(t *testing.T) {
+	repo := newMemArtifactRepo()
+	tenantA := uuid.New()
+	tenantB := uuid.New()
+	ctxA := withTenant(tenantA)
+	ctxB := withTenant(tenantB)
+	sid := uuid.New()
+
+	_ = repo.Create(ctxA, &Artifact{SessionID: sid, Type: "pdf", S3Key: "a/doc.pdf"})
+	_ = repo.Create(ctxA, &Artifact{SessionID: sid, Type: "summary", S3Key: "a/sum.txt"})
+
+	// Tenant B must not see tenant A's artifacts in the same session.
+	list, err := repo.ListForSession(ctxB, sid)
+	if err != nil {
+		t.Fatalf("ListForSession(ctxB): %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected 0 artifacts for tenant B, got %d", len(list))
+	}
+
+	// Tenant A sees its own artifacts.
+	list, err = repo.ListForSession(ctxA, sid)
+	if err != nil {
+		t.Fatalf("ListForSession(ctxA): %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("expected 2 artifacts for tenant A, got %d", len(list))
+	}
+}
+
 // TestS3Client_putObject verifies that PutObject sends a PUT request to the
 // configured endpoint and returns no error on a 200 response.
 func TestS3Client_putObject(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("expected PUT method, got %s", r.Method)
+		}
 		// Consume body so the SDK does not see a broken connection.
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("ETag", `"test-etag"`)
