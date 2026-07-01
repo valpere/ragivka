@@ -55,18 +55,24 @@ func (s *HTTPSender) SendMessage(ctx context.Context, chatID int64, text string)
 		return fmt.Errorf("telegram: marshal request: %w", err)
 	}
 
+	// url is built from server-configured fields only (apiBaseURL defaults to
+	// the fixed Telegram API host; botToken comes from env config) — no
+	// request-derived data reaches it, so gosec's taint tracker (which flags
+	// this purely because ctx originates from an inbound http.Request) is a
+	// false positive: there is no attacker-controlled input to redirect this
+	// call anywhere but the configured Telegram API host.
 	url := fmt.Sprintf("%s/bot%s/sendMessage", s.apiBaseURL, s.botToken)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body)) // #nosec G704 -- see comment above
 	if err != nil {
 		return fmt.Errorf("telegram: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(req) // #nosec G704 -- see comment above
 	if err != nil {
 		return fmt.Errorf("telegram: send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("telegram: sendMessage returned status %d", resp.StatusCode)

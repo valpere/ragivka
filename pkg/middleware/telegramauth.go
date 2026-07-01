@@ -7,7 +7,7 @@ import (
 
 // TelegramSecretHeader is the header Telegram sets on webhook requests when
 // a secret_token was configured via setWebhook (NFR-23).
-const TelegramSecretHeader = "X-Telegram-Bot-Api-Secret-Token"
+const TelegramSecretHeader = "X-Telegram-Bot-Api-Secret-Token" // #nosec G101 -- header name, not a credential value
 
 // TelegramSecretAuth returns middleware validating the Telegram webhook
 // secret token header using a constant-time comparison. Requests with a

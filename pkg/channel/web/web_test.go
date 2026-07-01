@@ -333,7 +333,7 @@ func TestWebSocketHandler_forwardsPublishedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Give the server a moment to register the subscription before publishing.
 	time.Sleep(50 * time.Millisecond)
@@ -364,7 +364,7 @@ func TestWebSocketHandler_unknownSession_returns404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	if r.StatusCode != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", r.StatusCode)
 	}

@@ -47,7 +47,7 @@ func NewWebSocketHandler(sessions runtime.SessionRepository, broadcaster Broadca
 		if err != nil {
 			return // Upgrade already wrote the HTTP error response.
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		ch, cancel := broadcaster.Subscribe(r.Context(), sessionID)
 		defer cancel()
