@@ -52,8 +52,8 @@ Interfaces (Telegram, Web Widget)
 
 ### Two entrypoints
 
-- `cmd/server/` — HTTP server (port `$PORT`, default 8080). Exposes `/health` and `/metrics`.
-- `cmd/worker/` — Background River worker (metrics on port `$METRICS_PORT`, default 8081). River integration is stubbed in Phase 1.
+- `cmd/server/` — HTTP server (port `$PORT`, default 8080). Exposes `/health`, `/metrics`; orchestrator/channel routes are registered but return 503 until dependency wiring lands (see below).
+- `cmd/worker/` — Background River worker (metrics on port `$METRICS_PORT`, default 8081). Fully wired: repositories, `aicore`, retriever, and the River worker pool.
 
 ### Current implementation state
 
@@ -61,17 +61,30 @@ Interfaces (Telegram, Web Widget)
 - `pkg/obs/` — OpenTelemetry tracing (`trace.go`), Prometheus metrics (`metrics.go`), per-request cost accounting (`cost.go`). Use `obs.InitTracer`, `obs.LogRequestCost`, `obs.RecordRetrievalLatency`, etc.
 - `pkg/db/` — `pgxpool` connection factory (`db.NewPool`). Uses `url.URL` construction to prevent DSN injection from special characters in credentials.
 - `pkg/tenant/` — Tenant context carrier. `tenant.WithTenantID` injects into context; `tenant.GetTenantID` / `tenant.MustGetTenantID` extracts. Every repository function must call one of these before querying.
-- `cmd/server/` — HTTP server skeleton with `/health` and `/metrics` only.
-- `cmd/worker/` — metrics shell; River worker pool is **stubbed** (no real jobs registered).
 
-**Phase 1b — Session & Job Store (not started):**
-Missing before Phase 1b can begin: SQL migrations (`migrations/`), `pkg/runtime/` package (Session FSM, River integration, HITL gates), River job arg/result types.
+**Phase 1b — Session & Job Store (complete):**
+- `migrations/` — goose SQL migrations, run idempotently on startup via `runtime.RunMigrations`.
+- `pkg/runtime/` — Session FSM (`fsm.go`), `SessionRepository`/`MessageRepository` (Postgres-backed), River job registration (`jobs.go`, `tool_job.go`, `artifact_job.go`), `worker.go` (River client wiring).
 
-**Phase 1c — AI Layer (not started):**
-`pkg/aicore/` — Model Router, Prompt Registry, Structured Output.
+**Phase 1c — AI Layer (complete):**
+- `pkg/aicore/` — `ModelRouter` (`router.go`), Ollama client (`ollama.go`), Prompt Registry (`registry.go`), structured-output parsing (`structured.go`), input sanitization (`sanitize.go`).
 
-**Phases 2–4 (not started):**
-Planned package locations: `pkg/knowledge/`, `pkg/channel/`, `pkg/tools/`, `pkg/guardrails/`, `pkg/graph/`.
+**Phase 2 — RAG Pipeline (complete):**
+- `pkg/knowledge/ingestion/` — Connector → Parser → Chunker (PII stripping) → Embedder → pgvector Indexer pipeline.
+- `pkg/knowledge/retrieval/` — hybrid retriever (vector + keyword blend) + re-ranker.
+- `pkg/tools/generators/` — deterministic PDF/Excel artifact generation from LLM-provided typed structs.
+
+**Phase 3 — Orchestration + Tools (complete):**
+- `pkg/tools/` — Tool Registry (Read/Draft/Write kind boundary), `AuditLogger` (idempotency + SHA-256 audit trail), `HITLGate`.
+- `pkg/orchestrator/` — `TieredOrchestrator` dispatching L0 (direct), L1 (sync RAG), L2/L3 (async River job) handlers; `NewMessageHandler` for `POST /v1/sessions/{id}/messages`.
+- `pkg/graph/` — DAG engine for L3 multi-agent workflows (`GraphEngine.Execute`, loop-back guard via `MaxIterations`, `NodeRegistry` for JSON-serialisable `GraphDef`).
+
+**Phase 4 — Channel Adapters (complete):**
+- `pkg/middleware/` — JWT auth (`JWTAuth`, NFR-23), Redis fixed-window rate limiter (`RateLimit`, FR-24/NFR-20), request-ID injection, standardized error envelope (`WriteError`, NFR-21), Telegram webhook secret validation.
+- `pkg/channel/web/` — `POST /v1/sessions`, `GET /v1/sessions/{id}/messages`, `GET /ws/sessions/{id}` (WebSocket via `Broadcaster`; `MemoryBroadcaster` is single-process only — a Redis pub/sub-backed implementation is required once API and Worker run as separate processes).
+- `pkg/channel/telegram/` — `POST /telegram/webhook/{tenantID}` webhook handler; resolves/creates a session from the Telegram user ID (deterministic UUID derivation — no separate `USER` table lookup yet) and replies synchronously for L0/L1 tiers. L2/L3 async replies are not yet delivered back to Telegram (would require a completion callback from the async worker).
+
+**Not yet wired into `cmd/server/main.go`:** the routes above are registered but return 503 — full wiring (constructing `aicore.ModelRouter`, `retrieval.Retriever`, River `JobEnqueuer`, Redis client, JWT secret) is deferred. `cmd/worker/main.go` already assembles the equivalent dependencies (repositories, `aicore`, retriever, River pool) — `cmd/server/main.go` needs the same treatment before the orchestrator-backed routes can go live.
 
 ### Critical invariants
 

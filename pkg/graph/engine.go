@@ -35,11 +35,11 @@ func (e *GraphEngine) Execute(ctx context.Context, g *Graph, initialInput NodeIn
 
 	// path tracks the current traversal stack.
 	// pathIdx maps nodeID → index in path (present = on stack).
-	path    := []frame{{g.StartID}}
+	path := []frame{{g.StartID}}
 	pathIdx := map[string]int{g.StartID: 0}
-	iters   := map[string]int{} // "from:to" → traversal count
+	iters := map[string]int{} // "from:to" → traversal count
 
-	currentID    := g.StartID
+	currentID := g.StartID
 	currentInput := initialInput
 	var lastOutput NodeOutput
 

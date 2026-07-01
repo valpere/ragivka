@@ -115,7 +115,7 @@ func TestEngine_NodeRunError_propagates(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEngine_BranchRouting_takesFirstMatchingEdge(t *testing.T) {
-	pathTrue  := newCount("pathTrue")
+	pathTrue := newCount("pathTrue")
 	pathFalse := newCount("pathFalse")
 
 	mkGraph := func(branchVal bool) *graph.Graph {
@@ -130,7 +130,7 @@ func TestEngine_BranchRouting_takesFirstMatchingEdge(t *testing.T) {
 			},
 			Edges: map[string][]graph.Edge{
 				"entry": {
-					{To: "pathTrue",  Predicate: func(o graph.NodeOutput) bool { return o.Data["branch"] == true }},
+					{To: "pathTrue", Predicate: func(o graph.NodeOutput) bool { return o.Data["branch"] == true }},
 					{To: "pathFalse", Predicate: func(o graph.NodeOutput) bool { return o.Data["branch"] == false }},
 				},
 			},
