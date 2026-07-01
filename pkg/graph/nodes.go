@@ -6,8 +6,8 @@ import "context"
 // Useful as a passthrough or for testing.
 type EchoNode struct{ id string }
 
-func NewEchoNode(id string) *EchoNode      { return &EchoNode{id: id} }
-func (n *EchoNode) ID() string             { return n.id }
+func NewEchoNode(id string) *EchoNode { return &EchoNode{id: id} }
+func (n *EchoNode) ID() string        { return n.id }
 func (n *EchoNode) Run(_ context.Context, in NodeInput) (NodeOutput, error) {
 	out := NodeOutput{Data: make(map[string]any, len(in.Data))}
 	for k, v := range in.Data {

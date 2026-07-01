@@ -49,19 +49,26 @@ func main() {
 	}
 	log.Println("Migrations applied")
 
-	// 4. HTTP server with /health, /metrics, and POST /v1/sessions/{id}/messages (NFR-12, FR-1/2/3)
-	// Full orchestrator wiring (LLM router, retriever, River enqueuer) is deferred to Phase 3+.
-	// The endpoint is registered now and returns 503 until AI layer is wired.
+	// 4. HTTP server with /health, /metrics, and the orchestrator-backed routes
+	// (NFR-12, FR-1/2/3, FR-21, FR-22). Full orchestrator wiring (LLM router,
+	// retriever, River enqueuer) is deferred to Phase 3+; the endpoints below
+	// are registered now and return 503 until that wiring lands.
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", obs.MetricsHandler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
-	// POST /v1/sessions/{id}/messages — calls TieredOrchestrator.Run (FR-1/FR-2/FR-3).
-	mux.HandleFunc("/v1/sessions/", func(w http.ResponseWriter, r *http.Request) {
+	orchestratorUnwired := func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "orchestrator not yet wired — complete AI layer (Phase 3) first", http.StatusServiceUnavailable)
-	})
+	}
+	// POST /v1/sessions/{id}/messages — calls TieredOrchestrator.Run (FR-1/FR-2/FR-3).
+	mux.HandleFunc("/v1/sessions/", orchestratorUnwired)
+	// POST /v1/sessions, GET /v1/sessions/{id}/messages, GET /ws/sessions/{id} — web widget (FR-22).
+	mux.HandleFunc("/v1/sessions", orchestratorUnwired)
+	mux.HandleFunc("/ws/sessions/", orchestratorUnwired)
+	// POST /telegram/webhook/{tenantID} — Telegram Bot API webhook (FR-21).
+	mux.HandleFunc("/telegram/webhook/", orchestratorUnwired)
 
 	port := getenv("PORT", "8080")
 	server := &http.Server{
