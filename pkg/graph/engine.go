@@ -44,6 +44,11 @@ func (e *GraphEngine) Execute(ctx context.Context, g *Graph, initialInput NodeIn
 	var lastOutput NodeOutput
 
 	for {
+		// Respect context cancellation so long-running loops can be interrupted.
+		if err := ctx.Err(); err != nil {
+			return NodeOutput{}, fmt.Errorf("graph: %w", err)
+		}
+
 		node, ok := g.Nodes[currentID]
 		if !ok {
 			return NodeOutput{}, fmt.Errorf("%w: %s", ErrNodeNotFound, currentID)
@@ -98,8 +103,23 @@ func (e *GraphEngine) Execute(ctx context.Context, g *Graph, initialInput NodeIn
 		}
 
 		currentID = next.To
-		currentInput = NodeInput(out)
+		// Shallow-copy Data to prevent aliasing between the previous node's
+		// output and the next node's input (nodes must not mutate input in place).
+		currentInput = NodeInput{Data: shallowCopyData(out.Data)}
 	}
 
 	return lastOutput, nil
+}
+
+// shallowCopyData returns a shallow copy of m so the caller's map is not
+// aliased into the next node's input.
+func shallowCopyData(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	cp := make(map[string]any, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	return cp
 }

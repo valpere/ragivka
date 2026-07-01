@@ -224,6 +224,51 @@ func TestEngine_LoopBackEdge_terminatesAtMaxIterations(t *testing.T) {
 	}
 }
 
+func TestEngine_ContextCancelled_stopsExecution(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	n := newCount("A")
+	g := &graph.Graph{
+		Nodes:   map[string]graph.Node{"A": n},
+		Edges:   map[string][]graph.Edge{},
+		StartID: "A",
+	}
+
+	_, err := engine().Execute(ctx, g, graph.NodeInput{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if n.count != 0 {
+		t.Errorf("node must not run once context is cancelled: got count %d", n.count)
+	}
+}
+
+func TestEngine_LoopBackEdge_dataNotAliasedAcrossIterations(t *testing.T) {
+	// Each iteration must see its own copy of Data — a mutation by a later
+	// node must not retroactively affect an earlier node's captured output.
+	var seen []int
+	a := graph.NewFuncNode("A", func(_ context.Context, in graph.NodeInput) (graph.NodeOutput, error) {
+		n, _ := in.Data["n"].(int)
+		seen = append(seen, n)
+		out := map[string]any{"n": n + 1}
+		return graph.NodeOutput{Data: out}, nil
+	})
+	g := &graph.Graph{
+		Nodes:   map[string]graph.Node{"A": a},
+		Edges:   map[string][]graph.Edge{"A": {{To: "A", MaxIterations: 2}}},
+		StartID: "A",
+	}
+
+	_, err := engine().Execute(context.Background(), g, graph.NodeInput{Data: map[string]any{"n": 0}})
+	if !errors.Is(err, graph.ErrMaxIterationsExceeded) {
+		t.Fatalf("expected ErrMaxIterationsExceeded, got %v", err)
+	}
+	if len(seen) != 3 || seen[0] != 0 || seen[1] != 1 || seen[2] != 2 {
+		t.Errorf("expected each iteration to see an independent incremented value, got %v", seen)
+	}
+}
+
 func TestEngine_CycleWithoutGuard_returnsCycleDetected(t *testing.T) {
 	a, b := newCount("A"), newCount("B")
 	// A → B → A (MaxIterations=0 on B→A → cycle error).
@@ -284,5 +329,28 @@ func TestNodeRegistry_UnknownKind_returnsError(t *testing.T) {
 	reg := graph.DefaultNodeRegistry()
 	if _, err := reg.BuildGraph(def); err == nil {
 		t.Error("expected error for unknown node kind, got nil")
+	}
+}
+
+func TestNodeRegistry_BuildGraph_undefinedStart_returnsError(t *testing.T) {
+	def := graph.GraphDef{
+		Start: "missing",
+		Nodes: map[string]graph.NodeDef{"n": {Kind: "echo"}},
+	}
+	reg := graph.DefaultNodeRegistry()
+	if _, err := reg.BuildGraph(def); err == nil {
+		t.Error("expected error for undefined start node, got nil")
+	}
+}
+
+func TestNodeRegistry_BuildGraph_undefinedEdgeTarget_returnsError(t *testing.T) {
+	def := graph.GraphDef{
+		Start: "n",
+		Nodes: map[string]graph.NodeDef{"n": {Kind: "echo"}},
+		Edges: map[string][]graph.EdgeDef{"n": {{To: "ghost"}}},
+	}
+	reg := graph.DefaultNodeRegistry()
+	if _, err := reg.BuildGraph(def); err == nil {
+		t.Error("expected error for undefined edge target, got nil")
 	}
 }

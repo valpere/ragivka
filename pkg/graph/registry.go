@@ -56,9 +56,16 @@ func (r *NodeRegistry) BuildGraph(gd GraphDef) (*Graph, error) {
 		nodes[id] = n
 	}
 
+	if _, ok := nodes[gd.Start]; !ok {
+		return nil, fmt.Errorf("graph: start node %q not defined", gd.Start)
+	}
+
 	edges := make(map[string][]Edge, len(gd.Edges))
 	for src, defs := range gd.Edges {
 		for _, ed := range defs {
+			if _, ok := nodes[ed.To]; !ok {
+				return nil, fmt.Errorf("graph: edge %s → %q: target node not defined", src, ed.To)
+			}
 			edges[src] = append(edges[src], Edge{
 				To:            ed.To,
 				MaxIterations: ed.MaxIterations,
