@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,10 +17,9 @@ import (
 	"github.com/valpere/ragivka/pkg/tenant"
 )
 
-// telegramUUIDNamespace derives a stable, deterministic UUID from a
-// Telegram user ID so sessions can be resolved/created without a separate
-// USER lookup table (out of scope for this adapter — see FR-21 scope).
-var telegramUUIDNamespace = uuid.MustParse("6f6d0f2e-6f6c-4a7c-9f3e-3d6c1f2b9a11")
+// channelType identifies this adapter's rows in the USER table (unique
+// per tenant alongside channel_id — see migrations/001_foundation.sql).
+const channelType = "telegram"
 
 // DefaultSessionTTL is the inactivity window applied to sessions created via
 // the Telegram adapter when no override is supplied (FR-7).
@@ -28,13 +28,15 @@ const DefaultSessionTTL = 30 * time.Minute
 // NewWebhookHandler returns an http.Handler for POST /telegram/webhook/{tenantID}
 // (FR-21). tenantID is taken from the path since each tenant is expected to
 // register its own bot + webhook URL; the handler validates the request
-// carries a valid tenant, resolves or creates a session keyed off the
-// Telegram user ID, runs the orchestrator, and — for synchronous tiers
-// (L0/L1) — sends the resulting assistant reply back to the chat.
+// carries a valid tenant, resolves or creates a USER row for the Telegram
+// user ID, resolves or creates a session for that user, runs the
+// orchestrator, and — for synchronous tiers (L0/L1) — sends the resulting
+// assistant reply back to the chat.
 // Async tiers (L2/L3) are acknowledged immediately; delivering their result
 // back to Telegram requires a completion callback from the async worker,
 // which is out of scope here (see pkg/orchestrator L2Handler doc comment).
 func NewWebhookHandler(
+	users runtime.UserRepository,
 	sessions runtime.SessionRepository,
 	messages runtime.MessageRepository,
 	orch orchestrator.Orchestrator,
@@ -71,7 +73,13 @@ func NewWebhookHandler(
 		}
 
 		ctx := tenant.WithTenantID(r.Context(), tenantID.String())
-		userID := uuid.NewSHA1(telegramUUIDNamespace, []byte(fmt.Sprintf("telegram:%d", update.Message.From.ID)))
+
+		userID, err := users.ResolveOrCreate(ctx, channelType, strconv.FormatInt(update.Message.From.ID, 10))
+		if err != nil {
+			slog.Error("telegram: resolve user failed", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 
 		sess, err := resolveOrCreateSession(ctx, sessions, tenantID, userID, ttl)
 		if err != nil {

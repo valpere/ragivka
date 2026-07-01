@@ -356,3 +356,18 @@ func TestTelegramSecretAuth_missingHeader_returns401(t *testing.T) {
 		t.Errorf("status: got %d, want 401", w.Code)
 	}
 }
+
+func TestTelegramSecretAuth_emptyConfiguredSecret_alwaysDenies(t *testing.T) {
+	// Regression: an unconfigured (empty) secret must not be satisfied by a
+	// request with no header — that would be an auth bypass, not a safe default.
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	w := httptest.NewRecorder()
+
+	middleware.TelegramSecretAuth("")(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("downstream handler must not run when the configured secret is empty")
+	})).ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status: got %d, want 401", w.Code)
+	}
+}

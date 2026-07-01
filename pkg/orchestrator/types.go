@@ -7,6 +7,7 @@ import (
 	"github.com/valpere/ragivka/pkg/aicore"
 	"github.com/valpere/ragivka/pkg/knowledge/retrieval"
 	"github.com/valpere/ragivka/pkg/runtime"
+	"github.com/valpere/ragivka/pkg/tools"
 )
 
 // Orchestrator is the entry point for all pipeline tiers (FR-1, FR-2, FR-3).
@@ -26,11 +27,12 @@ type JobEnqueuer interface {
 }
 
 // deps groups the shared dependencies used across handlers.
-// All handlers share the same sessions + messages repos; retriever/enqueuer are handler-specific.
+// All handlers share the same sessions + messages repos; retriever/enqueuer/hitl are handler-specific.
 type deps struct {
 	router    aicore.ModelRouter
 	sessions  runtime.SessionRepository
 	messages  runtime.MessageRepository
 	retriever retrieval.Retriever // nil for L0/L2
 	enqueuer  JobEnqueuer         // nil for L0/L1
+	hitl      *tools.HITLGate     // nil except L1 (FR-18)
 }

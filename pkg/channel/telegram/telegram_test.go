@@ -17,6 +17,34 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// Mock UserRepository
+// ---------------------------------------------------------------------------
+
+type mockUsers struct {
+	mu  sync.Mutex
+	ids map[string]uuid.UUID
+	err error
+}
+
+func newMockUsers() *mockUsers {
+	return &mockUsers{ids: make(map[string]uuid.UUID)}
+}
+
+func (m *mockUsers) ResolveOrCreate(_ context.Context, _, channelID string) (uuid.UUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return uuid.UUID{}, m.err
+	}
+	if id, ok := m.ids[channelID]; ok {
+		return id, nil
+	}
+	id := uuid.New()
+	m.ids[channelID] = id
+	return id, nil
+}
+
+// ---------------------------------------------------------------------------
 // Mock SessionRepository
 // ---------------------------------------------------------------------------
 
@@ -175,6 +203,7 @@ func telegramUpdateBody(userID, chatID int64, text string) *bytes.Reader {
 func TestWebhookHandler_createsSessionAndRepliesForSyncTier(t *testing.T) {
 	tenantID := uuid.New()
 	sessions := newMockSessions()
+	users := newMockUsers()
 	messages := &mockMessages{}
 	orch := &mockOrchestrator{onRun: func(sessionID uuid.UUID) {
 		_ = messages.Create(context.Background(), &runtime.Message{
@@ -183,7 +212,7 @@ func TestWebhookHandler_createsSessionAndRepliesForSyncTier(t *testing.T) {
 	}}
 	sender := &mockSender{}
 
-	h := telegram.NewWebhookHandler(sessions, messages, orch, sender, 0)
+	h := telegram.NewWebhookHandler(users, sessions, messages, orch, sender, 0)
 	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook/"+tenantID.String(),
 		telegramUpdateBody(555, 999, "hi bot"))
 	w := httptest.NewRecorder()
@@ -219,10 +248,11 @@ func TestWebhookHandler_createsSessionAndRepliesForSyncTier(t *testing.T) {
 func TestWebhookHandler_reusesExistingSessionForSameUser(t *testing.T) {
 	tenantID := uuid.New()
 	sessions := newMockSessions()
+	users := newMockUsers()
 	messages := &mockMessages{}
 	orch := &mockOrchestrator{}
 	sender := &mockSender{}
-	h := telegram.NewWebhookHandler(sessions, messages, orch, sender, 0)
+	h := telegram.NewWebhookHandler(users, sessions, messages, orch, sender, 0)
 
 	r1 := httptest.NewRequest(http.MethodPost, "/telegram/webhook/"+tenantID.String(),
 		telegramUpdateBody(555, 999, "first"))
@@ -248,8 +278,14 @@ func TestWebhookHandler_reusesExistingSessionForSameUser(t *testing.T) {
 func TestWebhookHandler_asyncTier_doesNotSendReply(t *testing.T) {
 	tenantID := uuid.New()
 	sessions := newMockSessions()
+	users := newMockUsers()
 	// Pre-seed an L2 session so resolveOrCreateSession finds it directly.
-	userID := uuid.NewSHA1(uuid.MustParse("6f6d0f2e-6f6c-4a7c-9f3e-3d6c1f2b9a11"), []byte("telegram:555"))
+	// userID must match what mockUsers.ResolveOrCreate will return for this
+	// Telegram user ID, so resolve it the same way the handler will.
+	userID, err := users.ResolveOrCreate(context.Background(), "telegram", "555")
+	if err != nil {
+		t.Fatalf("ResolveOrCreate: %v", err)
+	}
 	preSeeded := &runtime.Session{
 		ID: uuid.New(), TenantID: tenantID, UserID: userID, State: runtime.StateActive, Tier: runtime.TierL2,
 	}
@@ -259,7 +295,7 @@ func TestWebhookHandler_asyncTier_doesNotSendReply(t *testing.T) {
 	orch := &mockOrchestrator{}
 	sender := &mockSender{}
 
-	h := telegram.NewWebhookHandler(sessions, messages, orch, sender, 0)
+	h := telegram.NewWebhookHandler(users, sessions, messages, orch, sender, 0)
 	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook/"+tenantID.String(),
 		telegramUpdateBody(555, 999, "async please"))
 	w := httptest.NewRecorder()
@@ -278,11 +314,12 @@ func TestWebhookHandler_asyncTier_doesNotSendReply(t *testing.T) {
 func TestWebhookHandler_nonTextUpdate_returns200WithoutOrchestratorCall(t *testing.T) {
 	tenantID := uuid.New()
 	sessions := newMockSessions()
+	users := newMockUsers()
 	messages := &mockMessages{}
 	orch := &mockOrchestrator{}
 	sender := &mockSender{}
 
-	h := telegram.NewWebhookHandler(sessions, messages, orch, sender, 0)
+	h := telegram.NewWebhookHandler(users, sessions, messages, orch, sender, 0)
 	body, _ := json.Marshal(map[string]any{"update_id": 1}) // no message field
 	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook/"+tenantID.String(), bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -297,7 +334,7 @@ func TestWebhookHandler_nonTextUpdate_returns200WithoutOrchestratorCall(t *testi
 }
 
 func TestWebhookHandler_invalidTenantID_returns400(t *testing.T) {
-	h := telegram.NewWebhookHandler(newMockSessions(), &mockMessages{}, &mockOrchestrator{}, &mockSender{}, 0)
+	h := telegram.NewWebhookHandler(newMockUsers(), newMockSessions(), &mockMessages{}, &mockOrchestrator{}, &mockSender{}, 0)
 	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook/not-a-uuid", telegramUpdateBody(1, 1, "hi"))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -308,7 +345,7 @@ func TestWebhookHandler_invalidTenantID_returns400(t *testing.T) {
 }
 
 func TestWebhookHandler_wrongMethod_returns405(t *testing.T) {
-	h := telegram.NewWebhookHandler(newMockSessions(), &mockMessages{}, &mockOrchestrator{}, &mockSender{}, 0)
+	h := telegram.NewWebhookHandler(newMockUsers(), newMockSessions(), &mockMessages{}, &mockOrchestrator{}, &mockSender{}, 0)
 	r := httptest.NewRequest(http.MethodGet, "/telegram/webhook/"+uuid.New().String(), nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -319,7 +356,7 @@ func TestWebhookHandler_wrongMethod_returns405(t *testing.T) {
 }
 
 func TestWebhookHandler_malformedJSON_returns400(t *testing.T) {
-	h := telegram.NewWebhookHandler(newMockSessions(), &mockMessages{}, &mockOrchestrator{}, &mockSender{}, 0)
+	h := telegram.NewWebhookHandler(newMockUsers(), newMockSessions(), &mockMessages{}, &mockOrchestrator{}, &mockSender{}, 0)
 	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook/"+uuid.New().String(), strings.NewReader(`{not json`))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -331,7 +368,7 @@ func TestWebhookHandler_malformedJSON_returns400(t *testing.T) {
 
 func TestWebhookHandler_orchestratorError_returns500(t *testing.T) {
 	orch := &mockOrchestrator{err: errors.New("llm: timeout")}
-	h := telegram.NewWebhookHandler(newMockSessions(), &mockMessages{}, orch, &mockSender{}, 0)
+	h := telegram.NewWebhookHandler(newMockUsers(), newMockSessions(), &mockMessages{}, orch, &mockSender{}, 0)
 	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook/"+uuid.New().String(),
 		telegramUpdateBody(1, 1, "hi"))
 	w := httptest.NewRecorder()
@@ -345,7 +382,7 @@ func TestWebhookHandler_orchestratorError_returns500(t *testing.T) {
 func TestWebhookHandler_sessionLookupError_returns500(t *testing.T) {
 	sessions := newMockSessions()
 	sessions.getByUserErr = errors.New("db: connection refused")
-	h := telegram.NewWebhookHandler(sessions, &mockMessages{}, &mockOrchestrator{}, &mockSender{}, 0)
+	h := telegram.NewWebhookHandler(newMockUsers(), sessions, &mockMessages{}, &mockOrchestrator{}, &mockSender{}, 0)
 	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook/"+uuid.New().String(),
 		telegramUpdateBody(1, 1, "hi"))
 	w := httptest.NewRecorder()

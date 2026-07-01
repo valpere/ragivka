@@ -76,15 +76,18 @@ Interfaces (Telegram, Web Widget)
 
 **Phase 3 — Orchestration + Tools (complete):**
 - `pkg/tools/` — Tool Registry (Read/Draft/Write kind boundary), `AuditLogger` (idempotency + SHA-256 audit trail), `HITLGate`.
-- `pkg/orchestrator/` — `TieredOrchestrator` dispatching L0 (direct), L1 (sync RAG), L2/L3 (async River job) handlers; `NewMessageHandler` for `POST /v1/sessions/{id}/messages`.
+- `pkg/orchestrator/` — `TieredOrchestrator` dispatching L0 (direct), L1 (sync RAG + structured output + HITL gate), L2/L3 (async River job) handlers; `NewMessageHandler` for `POST /v1/sessions/{id}/messages`.
 - `pkg/graph/` — DAG engine for L3 multi-agent workflows (`GraphEngine.Execute`, loop-back guard via `MaxIterations`, `NodeRegistry` for JSON-serialisable `GraphDef`).
 
-**Phase 4 — Channel Adapters (complete):**
+**Phase 4 — Channel Adapters + MVP (complete):**
 - `pkg/middleware/` — JWT auth (`JWTAuth`, NFR-23), Redis fixed-window rate limiter (`RateLimit`, FR-24/NFR-20), request-ID injection, standardized error envelope (`WriteError`, NFR-21), Telegram webhook secret validation.
 - `pkg/channel/web/` — `POST /v1/sessions`, `GET /v1/sessions/{id}/messages`, `GET /ws/sessions/{id}` (WebSocket via `Broadcaster`; `MemoryBroadcaster` is single-process only — a Redis pub/sub-backed implementation is required once API and Worker run as separate processes).
-- `pkg/channel/telegram/` — `POST /telegram/webhook/{tenantID}` webhook handler; resolves/creates a session from the Telegram user ID (deterministic UUID derivation — no separate `USER` table lookup yet) and replies synchronously for L0/L1 tiers. L2/L3 async replies are not yet delivered back to Telegram (would require a completion callback from the async worker).
-
-**Not yet wired into `cmd/server/main.go`:** the routes above are registered but return 503 — full wiring (constructing `aicore.ModelRouter`, `retrieval.Retriever`, River `JobEnqueuer`, Redis client, JWT secret) is deferred. `cmd/worker/main.go` already assembles the equivalent dependencies (repositories, `aicore`, retriever, River pool) — `cmd/server/main.go` needs the same treatment before the orchestrator-backed routes can go live.
+- `pkg/channel/telegram/` — `POST /telegram/webhook/{tenantID}` webhook handler; resolves/creates a `USER` row via `runtime.UserRepository.ResolveOrCreate` (tenant-scoped, keyed by `channel_type`+`channel_id`) and replies synchronously for L0/L1 tiers. L2/L3 async replies are not yet delivered back to Telegram (would require a completion callback from the async worker).
+- `pkg/runtime/user_repo.go` — `UserRepository.ResolveOrCreate` upserts into `USER`; required because `session.user_id` has a composite FK to `USER(tenant_id, id)` (migrations/001_foundation.sql) — sessions cannot be created for a user that doesn't have a `USER` row.
+- L1Handler now requests structured JSON output (`{answer, confidence, requires_human}`, FR-15) from the model and evaluates it against `HITLGate` (threshold via `HITL_CONFIDENCE_THRESHOLD`, default 0.7). Below threshold, `requires_human=true`, or an unparseable response all escalate the session to `WaitingForHuman` instead of replying (fail-safe).
+- `cmd/server/main.go` is now **fully wired**: repositories, `aicore` router, hybrid retriever, `HITLGate`, an insert-only River client (`riverEnqueuer`) for L2/L3 job enqueueing, Redis-backed rate limiting, JWT auth, and both channel adapters are constructed and routed. `cmd/worker/main.go` remains the process that actually registers and runs River `Workers`.
+- `migrations/006_seed_mvp.sql` — fixture tenant/user/3 FAQ documents (chunks have `NULL` embeddings; hybrid retrieval falls back to keyword-only scoring for them) for `integration/l1_customer_support_test.go` and `scripts/smoke_test.sh`.
+- See `README.md` → "Running the MVP" for the full local setup.
 
 ### Critical invariants
 
