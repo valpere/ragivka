@@ -92,6 +92,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("river client: %v", err)
 	}
+	// Stop is a safe no-op for a client that never called Start (insert-only
+	// usage here); deferred for symmetry with the other resources below.
+	defer func() { _ = riverClient.Stop(context.Background()) }()
 	enqueuer := &riverEnqueuer{client: riverClient}
 
 	// 8. Orchestrator (FR-1/FR-2/FR-3)
@@ -109,13 +112,21 @@ func main() {
 	rateLimitPerMin := envInt("RATE_LIMIT_REQUESTS_PER_MIN", 60)
 	limitFor := func(string) int { return rateLimitPerMin }
 
-	jwtSecret := []byte(getenv("JWT_SECRET", "dev-insecure-secret-change-me"))
+	const devInsecureJWTSecret = "dev-insecure-secret-change-me" // #nosec G101 -- placeholder default, not a real credential
+	jwtSecretRaw := getenv("JWT_SECRET", devInsecureJWTSecret)
+	if jwtSecretRaw == devInsecureJWTSecret {
+		log.Println("WARNING: JWT_SECRET is not set — using an insecure, publicly-known default. Set JWT_SECRET before exposing this server.")
+	}
+	jwtSecret := []byte(jwtSecretRaw)
 	sessionTTL := time.Duration(envInt("SESSION_TTL_MINUTES", 30)) * time.Minute
 
 	// 10. Channel adapters (FR-21, FR-22)
 	broadcaster := web.NewMemoryBroadcaster()
 	telegramSender := telegram.NewHTTPSender(os.Getenv("TELEGRAM_BOT_TOKEN"))
 	telegramWebhookSecret := os.Getenv("TELEGRAM_WEBHOOK_SECRET")
+	if telegramWebhookSecret == "" {
+		log.Println("WARNING: TELEGRAM_WEBHOOK_SECRET is not set — the Telegram webhook route will reject all requests until it is configured.")
+	}
 
 	// 11. HTTP server (NFR-12)
 	mux := http.NewServeMux()

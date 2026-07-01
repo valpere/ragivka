@@ -32,6 +32,10 @@ func (r *pgUserRepo) ResolveOrCreate(ctx context.Context, channelType, channelID
 	}
 
 	var userID uuid.UUID
+	// The DO UPDATE SET is a deliberate no-op (channel_type is already part
+	// of the conflict target, so this writes back the same value): Postgres
+	// only evaluates RETURNING on rows actually touched by the upsert, and a
+	// plain DO NOTHING would skip RETURNING (and so the row's id) on conflict.
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO "user" (tenant_id, channel_type, channel_id)
 		VALUES ($1, $2, $3)
