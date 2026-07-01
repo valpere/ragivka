@@ -51,7 +51,7 @@ for i, r in enumerate(results, 1):
     score = r.get("Score", 0)
     content = r.get("Content", "").strip()
     # Flag tool call chunks
-    is_tool = bool(re.match(r'^(Bash|Read|Write|Edit|Glob|Grep|WebFetch|Agent|Task)\s*\{', content))
+    is_tool = bool(re.match(r'^(Bash|Read|Write|Edit|Glob|Grep|WebFetch|WebSearch|Agent|Task)\s*\{', content))
     tag = " [tool]" if is_tool else ""
     snippet = content[:400] + ("…" if len(content) > 400 else "")
     print(f"[{i}] {date} · {role}{tag} · score={score:.3f}")

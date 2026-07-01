@@ -72,11 +72,11 @@ else:
     content = open(log).read()
     parts = re.split(r'(?m)(?=^## \d{4}-\d{2}-\d{2})', content)
     entries = [p.strip() for p in parts if p.strip()]
-    if entries and entries[-1].startswith(f'## {today}'):
-        entries[-1] = entry      # replace today
-    else:
-        entries.append(entry)    # new day
-    entries = entries[-max_keep:]
+    today_idx = next((i for i, e in enumerate(entries) if e.startswith(f'## {today}')), -1)
+    if today_idx >= 0:
+        entries.pop(today_idx)
+    entries.append(entry)
+    entries = entries[-max_keep:]    # freshest write can never be trimmed away
     open(log, 'w').write('\n\n'.join(entries) + '\n')
 ```
 

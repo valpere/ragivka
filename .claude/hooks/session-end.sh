@@ -221,12 +221,12 @@ parts = re.split(r'(?m)(?=^## \d{4}-\d{2}-\d{2})', content)
 entries = [p.strip() for p in parts if p.strip()]
 
 today_header = f'## {today}'
-if entries and entries[-1].startswith(today_header):
-    entries[-1] = entry          # replace today's entry
-else:
-    entries.append(entry)        # new day
+today_idx = next((i for i, e in enumerate(entries) if e.startswith(today_header)), -1)
+if today_idx >= 0:
+    entries.pop(today_idx)
+entries.append(entry)
 
-entries = entries[-max_keep:]    # rotate
+entries = entries[-max_keep:]    # rotate — freshest write can never be trimmed away
 
 with open(log_file, 'w') as f:
     f.write('\n\n'.join(entries) + '\n')
