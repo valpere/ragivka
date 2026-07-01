@@ -1,7 +1,8 @@
 # Database Migrations
 
-Pure SQL files — tooling is not yet decided (candidates: goose, golang-migrate, atlas).
-Each file is idempotent and can be applied with `psql -f <file>` for local dev.
+SQL files applied via [goose](https://github.com/pressly/goose) (`pkg/runtime.RunMigrations`,
+called on every `cmd/server` and `cmd/worker` startup — idempotent, safe to re-run).
+Files are embedded into the binary via `migrations.FS` (`migrations.go`).
 
 ## File Naming
 
@@ -16,8 +17,9 @@ NNN_<description>.sql   — NNN is a 3-digit sequence number
 | `001_foundation.sql` | 1a | TENANT, USER — the absolute security boundary |
 | `002_sessions.sql` | 1b | SESSION, MESSAGE — FSM + conversation history |
 | `003_prompt_registry.sql` | 1c | PROMPT_VERSION — versioned system prompts |
-| `004_knowledge.sql` | 2 | DOCUMENT, CHUNK (pgvector + tsvector) — TBD |
-| `005_tools.sql` | 3 | AUDIT_LOG, ARTIFACT — TBD |
+| `004_artifacts.sql` | 2a | ARTIFACT — S3-backed document and generated artifact records |
+| `005_knowledge.sql` | 2b | DOCUMENT, CHUNK (pgvector + tsvector) — RAG knowledge layer |
+| `006_seed_mvp.sql` | 4 | Fixture data (1 tenant, 1 user, 3 FAQ documents) for the MVP integration test and smoke test |
 
 ## River Queue
 
@@ -30,7 +32,5 @@ Session → River link: River job `args` JSONB contains `session_id` and `tenant
 
 ```bash
 docker compose -f docker/docker-compose.yml up -d
-psql postgresql://ragivka:ragivka_password@localhost:5432/ragivka_db -f migrations/001_foundation.sql
-psql postgresql://ragivka:ragivka_password@localhost:5432/ragivka_db -f migrations/002_sessions.sql
-psql postgresql://ragivka:ragivka_password@localhost:5432/ragivka_db -f migrations/003_prompt_registry.sql
+go run ./cmd/server/   # applies all migrations on startup
 ```

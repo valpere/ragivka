@@ -2,6 +2,7 @@ package orchestrator_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/valpere/ragivka/pkg/orchestrator"
 	"github.com/valpere/ragivka/pkg/runtime"
 	"github.com/valpere/ragivka/pkg/tenant"
+	"github.com/valpere/ragivka/pkg/tools"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,6 +35,24 @@ func (m *mockRouter) Generate(_ context.Context, _ aicore.GenerateRequest) (aico
 	}
 	return aicore.GenerateResponse{Content: m.response}, nil
 }
+
+// structuredJSON builds a valid l1SystemInstruction-shaped response body for mockRouter.
+func structuredJSON(answer string, confidence float64, requiresHuman bool) string {
+	b, _ := json.Marshal(map[string]any{
+		"answer":         answer,
+		"confidence":     confidence,
+		"requires_human": requiresHuman,
+	})
+	return string(b)
+}
+
+// permissiveHITL never escalates (threshold 0) — used by tests that only
+// care about the happy path, not HITL behavior itself.
+func permissiveHITL() *tools.HITLGate { return tools.NewHITLGate(0) }
+
+// strictHITL always escalates unless confidence is 1.0 — used by tests that
+// exercise the HITL escalation path.
+func strictHITL() *tools.HITLGate { return tools.NewHITLGate(0.99) }
 
 // ---------------------------------------------------------------------------
 // Mock SessionRepository
@@ -68,8 +88,16 @@ func (m *mockSessions) Create(_ context.Context, s *runtime.Session) error {
 func (m *mockSessions) GetActiveByUserID(_ context.Context, _ uuid.UUID) (*runtime.Session, error) {
 	return nil, runtime.ErrNotFound
 }
-func (m *mockSessions) Transition(_ context.Context, _ uuid.UUID, _, _ runtime.State, _ int) (int, error) {
-	return 1, nil
+func (m *mockSessions) Transition(_ context.Context, id uuid.UUID, _, to runtime.State, _ int) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	if !ok {
+		return 0, runtime.ErrNotFound
+	}
+	s.State = to
+	s.Version++
+	return s.Version, nil
 }
 func (m *mockSessions) ListExpired(_ context.Context) ([]*runtime.Session, error) { return nil, nil }
 
@@ -209,10 +237,11 @@ func TestL1Handler_Handle_savesMessagesWithCitations(t *testing.T) {
 	}}
 
 	h := orchestrator.NewL1Handler(
-		&mockRouter{response: "Paris is the capital."},
+		&mockRouter{response: structuredJSON("Paris is the capital.", 0.95, false)},
 		newMockSessions(sess),
 		messages,
 		retriever,
+		permissiveHITL(),
 	)
 	if err := h.Handle(tenantCtxFor(sess), sess, "What is the capital of France?"); err != nil {
 		t.Fatalf("Handle: %v", err)
@@ -229,6 +258,9 @@ func TestL1Handler_Handle_savesMessagesWithCitations(t *testing.T) {
 	if assistant.Role != "assistant" {
 		t.Errorf("second message role: got %q, want assistant", assistant.Role)
 	}
+	if assistant.Content != "Paris is the capital." {
+		t.Errorf("content: got %q, want %q", assistant.Content, "Paris is the capital.")
+	}
 	if len(assistant.CitationRefs) == 0 {
 		t.Error("assistant message must include CitationRefs from retrieved chunks")
 	}
@@ -240,13 +272,95 @@ func TestL1Handler_Handle_savesMessagesWithCitations(t *testing.T) {
 func TestL1Handler_Handle_retrieverErrorPropagates(t *testing.T) {
 	sess := tenantSession(runtime.TierL1)
 	h := orchestrator.NewL1Handler(
-		&mockRouter{response: "ok"},
+		&mockRouter{response: structuredJSON("ok", 0.95, false)},
 		newMockSessions(sess),
 		&mockMessages{},
 		&mockRetriever{err: errors.New("retriever: db error")},
+		permissiveHITL(),
 	)
 	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err == nil {
 		t.Error("expected error when retriever fails, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// L1Handler HITL escalation tests (FR-15, FR-18)
+// ---------------------------------------------------------------------------
+
+func TestL1Handler_Handle_escalatesWhenConfidenceBelowThreshold(t *testing.T) {
+	sess := tenantSession(runtime.TierL1)
+	sessions := newMockSessions(sess)
+	messages := &mockMessages{}
+	h := orchestrator.NewL1Handler(
+		&mockRouter{response: structuredJSON("not sure", 0.4, false)},
+		sessions,
+		messages,
+		&mockRetriever{},
+		strictHITL(),
+	)
+	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	messages.mu.Lock()
+	msgCount := len(messages.messages)
+	messages.mu.Unlock()
+	if msgCount != 1 {
+		t.Errorf("expected only the user message saved (no assistant reply on escalation), got %d messages", msgCount)
+	}
+
+	sessions.mu.Lock()
+	got := sessions.sessions[sess.ID].State
+	sessions.mu.Unlock()
+	if got != runtime.StateWaitingForHuman {
+		t.Errorf("session state: got %q, want WaitingForHuman", got)
+	}
+}
+
+func TestL1Handler_Handle_escalatesWhenRequiresHumanTrue(t *testing.T) {
+	sess := tenantSession(runtime.TierL1)
+	sessions := newMockSessions(sess)
+	messages := &mockMessages{}
+	// High confidence but requires_human=true must still escalate.
+	h := orchestrator.NewL1Handler(
+		&mockRouter{response: structuredJSON("answer", 0.99, true)},
+		sessions,
+		messages,
+		&mockRetriever{},
+		permissiveHITL(),
+	)
+	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	sessions.mu.Lock()
+	got := sessions.sessions[sess.ID].State
+	sessions.mu.Unlock()
+	if got != runtime.StateWaitingForHuman {
+		t.Errorf("session state: got %q, want WaitingForHuman", got)
+	}
+}
+
+func TestL1Handler_Handle_escalatesOnUnparseableResponse(t *testing.T) {
+	sess := tenantSession(runtime.TierL1)
+	sessions := newMockSessions(sess)
+	messages := &mockMessages{}
+	h := orchestrator.NewL1Handler(
+		&mockRouter{response: "not valid json"},
+		sessions,
+		messages,
+		&mockRetriever{},
+		permissiveHITL(),
+	)
+	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	sessions.mu.Lock()
+	got := sessions.sessions[sess.ID].State
+	sessions.mu.Unlock()
+	if got != runtime.StateWaitingForHuman {
+		t.Errorf("unparseable response must fail safe to WaitingForHuman, got %q", got)
 	}
 }
 
@@ -311,14 +425,14 @@ func TestOrchestrator_Run_dispatchesByTier(t *testing.T) {
 			sess := tenantSession(tc.tier)
 			sessions := newMockSessions(sess)
 			messages := &mockMessages{}
-			router := &mockRouter{response: "ok"}
+			router := &mockRouter{response: structuredJSON("ok", 0.95, false)}
 			retriever := &mockRetriever{chunks: []retrieval.RankedChunk{{ChunkID: uuid.New(), Content: "ctx"}}}
 			enqueuer := &mockEnqueuer{}
 
 			orch := orchestrator.NewTieredOrchestrator(
 				sessions,
 				orchestrator.NewL0Handler(router, sessions, messages),
-				orchestrator.NewL1Handler(router, sessions, messages, retriever),
+				orchestrator.NewL1Handler(router, sessions, messages, retriever, permissiveHITL()),
 				orchestrator.NewL2Handler(sessions, messages, enqueuer),
 			)
 
@@ -343,7 +457,7 @@ func TestOrchestrator_Run_unknownSessionReturnsError(t *testing.T) {
 	orch := orchestrator.NewTieredOrchestrator(
 		sessions,
 		orchestrator.NewL0Handler(router, sessions, messages),
-		orchestrator.NewL1Handler(router, sessions, messages, &mockRetriever{}),
+		orchestrator.NewL1Handler(router, sessions, messages, &mockRetriever{}, permissiveHITL()),
 		orchestrator.NewL2Handler(sessions, messages, &mockEnqueuer{}),
 	)
 	ctx := tenant.WithTenantID(context.Background(), uuid.New().String())
@@ -418,10 +532,11 @@ func TestL1Handler_Handle_listForSessionErrorPropagates(t *testing.T) {
 	sess := tenantSession(runtime.TierL1)
 	messages := &errorOnListMessages{err: errors.New("db: connection lost")}
 	h := orchestrator.NewL1Handler(
-		&mockRouter{response: "ok"},
+		&mockRouter{response: structuredJSON("ok", 0.95, false)},
 		newMockSessions(sess),
 		messages,
 		&mockRetriever{chunks: []retrieval.RankedChunk{{ChunkID: uuid.New(), Content: "ctx"}}},
+		permissiveHITL(),
 	)
 	if err := h.Handle(tenantCtxFor(sess), sess, "test"); err == nil {
 		t.Error("expected error when ListForSession fails, got nil")
@@ -456,7 +571,7 @@ func TestOrchestrator_Run_unknownTierReturnsError(t *testing.T) {
 	orch := orchestrator.NewTieredOrchestrator(
 		sessions,
 		orchestrator.NewL0Handler(router, sessions, messages),
-		orchestrator.NewL1Handler(router, sessions, messages, &mockRetriever{}),
+		orchestrator.NewL1Handler(router, sessions, messages, &mockRetriever{}, permissiveHITL()),
 		orchestrator.NewL2Handler(sessions, messages, &mockEnqueuer{}),
 	)
 	ctx := tenant.WithTenantID(context.Background(), sess.TenantID.String())
