@@ -73,14 +73,15 @@ func WithUserID(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, userIDContextKey{}, userID)
 }
 
-// bearerToken extracts the token from the "Authorization: Bearer <token>" header.
+// bearerToken extracts the token from the "Authorization: Bearer <token>"
+// header. The scheme name is matched case-insensitively per RFC 7235 §2.1.
 func bearerToken(r *http.Request) (string, error) {
 	h := r.Header.Get("Authorization")
 	const prefix = "Bearer "
-	if !strings.HasPrefix(h, prefix) {
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
 		return "", errors.New("missing or malformed Authorization header")
 	}
-	tok := strings.TrimPrefix(h, prefix)
+	tok := h[len(prefix):]
 	if tok == "" {
 		return "", errors.New("empty bearer token")
 	}

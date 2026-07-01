@@ -86,9 +86,21 @@ func NewWebhookHandler(
 			return
 		}
 
+		// Re-fetch the session rather than trusting the pre-Run value of
+		// sess.Tier: if a future FSM transition escalates the tier during
+		// Run (e.g. L0 → L2 on low confidence), the cached value would be
+		// stale and this check would attempt a synchronous reply for a
+		// session that no longer has one ready.
+		current, err := sessions.GetByID(ctx, sess.ID)
+		if err != nil {
+			slog.Error("telegram: reload session failed", "error", err, "session_id", sess.ID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		// Synchronous tiers have an assistant reply ready immediately after
 		// Run returns; async tiers (L2/L3) do not — nothing to send yet.
-		if sess.Tier == runtime.TierL0 || sess.Tier == runtime.TierL1 {
+		if current.Tier == runtime.TierL0 || current.Tier == runtime.TierL1 {
 			if err := replyWithLatestAssistantMessage(ctx, messages, sess.ID, update.Message.Chat.ID, sender); err != nil {
 				slog.Error("telegram: reply failed", "error", err, "session_id", sess.ID)
 			}

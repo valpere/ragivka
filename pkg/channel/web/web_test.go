@@ -351,6 +351,66 @@ func TestWebSocketHandler_forwardsPublishedMessages(t *testing.T) {
 	}
 }
 
+// cancelSpyBroadcaster wraps MemoryBroadcaster to observe when a
+// subscription's cancel func runs, so tests can detect whether the WS
+// handler goroutine actually returns after a client disconnects.
+type cancelSpyBroadcaster struct {
+	*web.MemoryBroadcaster
+	cancelled chan struct{}
+}
+
+func newCancelSpyBroadcaster() *cancelSpyBroadcaster {
+	return &cancelSpyBroadcaster{
+		MemoryBroadcaster: web.NewMemoryBroadcaster(),
+		cancelled:         make(chan struct{}, 1),
+	}
+}
+
+func (s *cancelSpyBroadcaster) Subscribe(ctx context.Context, sessionID uuid.UUID) (<-chan []byte, func()) {
+	ch, cancel := s.MemoryBroadcaster.Subscribe(ctx, sessionID)
+	return ch, func() {
+		cancel()
+		select {
+		case s.cancelled <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func TestWebSocketHandler_clientDisconnectWithoutPublish_doesNotHang(t *testing.T) {
+	// Regression test: the handler previously blocked forever on `for msg
+	// := range ch` when a client disconnected before any message was ever
+	// published for its session, since ch is only closed by the deferred
+	// cancel() — which only runs once the (still-blocked) handler returns.
+	// httptest.Server.Close() can't detect this: gorilla/websocket hijacks
+	// the connection, so the net/http server no longer tracks it and Close()
+	// returns immediately regardless of whether the handler goroutine is
+	// stuck. Instead, observe cancel() directly via a spy Broadcaster.
+	tenantID := uuid.New()
+	sess := &runtime.Session{ID: uuid.New(), TenantID: tenantID, State: runtime.StateActive, Tier: runtime.TierL2}
+	sessions := newMockSessions(sess)
+	broadcaster := newCancelSpyBroadcaster()
+
+	handler := middlewareTenant(tenantID, web.NewWebSocketHandler(sessions, broadcaster))
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/sessions/" + sess.ID.String()
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	// Disconnect immediately — no message is ever published for this session.
+	_ = conn.Close()
+
+	select {
+	case <-broadcaster.cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancel() was never called — handler goroutine is stuck (deadlock regression)")
+	}
+}
+
 func TestWebSocketHandler_unknownSession_returns404(t *testing.T) {
 	tenantID := uuid.New()
 	sessions := newMockSessions()

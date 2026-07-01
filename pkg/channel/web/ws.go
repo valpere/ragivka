@@ -53,9 +53,15 @@ func NewWebSocketHandler(sessions runtime.SessionRepository, broadcaster Broadca
 		defer cancel()
 
 		// Drain client-initiated frames (e.g. pings, close) in the
-		// background so the connection is promptly detected as dead;
-		// this handler does not accept client-sent chat messages.
+		// background so a client disconnect is promptly detected; this
+		// handler does not accept client-sent chat messages. disconnected
+		// signals the main loop below so it doesn't block forever on ch
+		// when the client goes away without any message ever being
+		// published for this session (ch is only closed by the deferred
+		// cancel() above, which itself only runs once this handler returns).
+		disconnected := make(chan struct{})
 		go func() {
+			defer close(disconnected)
 			for {
 				if _, _, err := conn.ReadMessage(); err != nil {
 					return
@@ -63,8 +69,16 @@ func NewWebSocketHandler(sessions runtime.SessionRepository, broadcaster Broadca
 			}
 		}()
 
-		for msg := range ch {
-			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+		for {
+			select {
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					return
+				}
+			case <-disconnected:
 				return
 			}
 		}

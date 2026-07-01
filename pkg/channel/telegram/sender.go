@@ -6,7 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
+
+// senderTimeout bounds a single sendMessage call so a hanging Telegram API
+// response can't block the webhook handler's goroutine indefinitely.
+const senderTimeout = 15 * time.Second
 
 // Sender delivers a reply to a Telegram chat. Abstracted so the webhook
 // handler is testable without a live bot token.
@@ -27,7 +32,7 @@ type HTTPSender struct {
 // NewHTTPSender constructs an HTTPSender for the given bot token.
 func NewHTTPSender(botToken string) *HTTPSender {
 	return &HTTPSender{
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: senderTimeout},
 		apiBaseURL: "https://api.telegram.org",
 		botToken:   botToken,
 	}
@@ -37,7 +42,7 @@ func NewHTTPSender(botToken string) *HTTPSender {
 // base URL (e.g. an httptest.Server) instead of the real Telegram API.
 func NewHTTPSenderForTest(apiBaseURL, botToken string) *HTTPSender {
 	return &HTTPSender{
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: senderTimeout},
 		apiBaseURL: apiBaseURL,
 		botToken:   botToken,
 	}

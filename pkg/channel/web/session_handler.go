@@ -2,7 +2,7 @@ package web
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -79,7 +79,8 @@ func NewCreateSessionHandler(sessions runtime.SessionRepository, ttl time.Durati
 			ExpiresAt: time.Now().Add(ttl),
 		}
 		if err := sessions.Create(r.Context(), sess); err != nil {
-			middleware.WriteError(w, r, http.StatusInternalServerError, "internal_error", fmt.Sprintf("create session: %v", err))
+			slog.Error("web: create session failed", "error", err, "tenant_id", tenantID)
+			middleware.WriteError(w, r, http.StatusInternalServerError, "internal_error", "failed to create session")
 			return
 		}
 

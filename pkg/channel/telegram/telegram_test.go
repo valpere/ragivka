@@ -23,12 +23,16 @@ import (
 type mockSessions struct {
 	mu           sync.Mutex
 	byUser       map[uuid.UUID]*runtime.Session
+	byID         map[uuid.UUID]*runtime.Session
 	created      []*runtime.Session
 	getByUserErr error
 }
 
 func newMockSessions() *mockSessions {
-	return &mockSessions{byUser: make(map[uuid.UUID]*runtime.Session)}
+	return &mockSessions{
+		byUser: make(map[uuid.UUID]*runtime.Session),
+		byID:   make(map[uuid.UUID]*runtime.Session),
+	}
 }
 
 func (m *mockSessions) Create(_ context.Context, s *runtime.Session) error {
@@ -36,11 +40,19 @@ func (m *mockSessions) Create(_ context.Context, s *runtime.Session) error {
 	defer m.mu.Unlock()
 	cp := *s
 	m.byUser[cp.UserID] = &cp
+	m.byID[cp.ID] = &cp
 	m.created = append(m.created, &cp)
 	return nil
 }
-func (m *mockSessions) GetByID(_ context.Context, _ uuid.UUID) (*runtime.Session, error) {
-	return nil, runtime.ErrNotFound
+func (m *mockSessions) GetByID(_ context.Context, id uuid.UUID) (*runtime.Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.byID[id]
+	if !ok {
+		return nil, runtime.ErrNotFound
+	}
+	cp := *s
+	return &cp, nil
 }
 func (m *mockSessions) GetActiveByUserID(_ context.Context, userID uuid.UUID) (*runtime.Session, error) {
 	m.mu.Lock()
@@ -238,9 +250,11 @@ func TestWebhookHandler_asyncTier_doesNotSendReply(t *testing.T) {
 	sessions := newMockSessions()
 	// Pre-seed an L2 session so resolveOrCreateSession finds it directly.
 	userID := uuid.NewSHA1(uuid.MustParse("6f6d0f2e-6f6c-4a7c-9f3e-3d6c1f2b9a11"), []byte("telegram:555"))
-	sessions.byUser[userID] = &runtime.Session{
+	preSeeded := &runtime.Session{
 		ID: uuid.New(), TenantID: tenantID, UserID: userID, State: runtime.StateActive, Tier: runtime.TierL2,
 	}
+	sessions.byUser[userID] = preSeeded
+	sessions.byID[preSeeded.ID] = preSeeded
 	messages := &mockMessages{}
 	orch := &mockOrchestrator{}
 	sender := &mockSender{}
