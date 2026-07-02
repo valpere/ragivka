@@ -11,7 +11,7 @@ Every time an agent processes a task or GitHub issue in this repository, they MU
 
 ## 2. Review and Validation Workflow
 1. **Self-Review:** Agents must perform a self-review of their diff against the issue requirements before opening a PR.
-2. **External Agent Review:** Once a PR is opened, the implementing agent should invoke external agents (e.g., `codex` or `glm-5:cloud` via CLI) to review the diff for security vulnerabilities, edge cases, and adherence to Go idioms.
+2. **External Agent Review:** Once a PR is opened, the implementing agent should invoke external agents (e.g., `codex` or `glm-5.2:cloud` via CLI) to review the diff for security vulnerabilities, edge cases, and adherence to Go idioms.
 3. **Security Checks:** Ensure the code complies with `govulncheck` and `gosec`. (This is automated via GitHub Actions).
 4. **Human Review:** Await the USER's explicit approval on the Pull Request. If changes are requested by the USER, implement them in follow-up commits.
 
