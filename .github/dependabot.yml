@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Go modules (go.mod)
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # GitHub Actions workflows (.github/workflows/)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Docker Compose images (docker/docker-compose.yml) — no Dockerfile in this
+  # repo, so "docker-compose" is used instead of the "docker" ecosystem.
+  - package-ecosystem: "docker-compose"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
