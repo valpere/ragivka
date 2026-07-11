@@ -33,7 +33,7 @@ services:
 
   # Redis for ephemeral caching and rate limiting (FR-24, NFR-20)
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     container_name: ragivka_redis
     ports:
       - "6379:6379"
