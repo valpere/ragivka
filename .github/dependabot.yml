@@ -18,3 +18,9 @@ updates:
     directory: "/docker"
     schedule:
       interval: "weekly"
+    ignore:
+      # Redis 8.0 switched from the permissive Redis license to a choice of
+      # RSALv2 / SSPLv1 / AGPLv3 (see PR #53, issue #65) — staying on the
+      # 7.x line deliberately. Patch updates within 7-alpine still apply.
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major"]
