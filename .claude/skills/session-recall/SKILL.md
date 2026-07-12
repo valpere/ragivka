@@ -36,28 +36,20 @@ fi
 
 QUERY="$*"
 RESULTS=$(session-indexer search "$QUERY" --db "$DB" --limit 10 --json)
-python3 - "$RESULTS" <<'PYEOF'
-import json, sys, re
-
-results = json.loads(sys.argv[1])
-if not results:
-    print("No results.")
-    sys.exit(0)
-
-print(f"{len(results)} result(s):\n")
-for i, r in enumerate(results, 1):
-    date = r.get("SessionDate", "?")
-    role = r.get("Role", "?")
-    score = r.get("Score", 0)
-    content = r.get("Content", "").strip()
-    # Flag tool call chunks
-    is_tool = bool(re.match(r'^(Bash|Read|Write|Edit|Glob|Grep|WebFetch|WebSearch|Agent|Task)\s*\{', content))
-    tag = " [tool]" if is_tool else ""
-    snippet = content[:400] + ("…" if len(content) > 400 else "")
-    print(f"[{i}] {date} · {role}{tag} · score={score:.3f}")
-    print(f"    {snippet}")
-    print()
-PYEOF
+printf '%s' "$RESULTS" | jq -r '
+  if length == 0 then "No results."
+  else
+    "\(length) result(s):\n",
+    (to_entries[] |
+      "[\(.key + 1)] \(.value.SessionDate) · \(.value.Role)\(
+        if (.value.Content | test("^(Bash|Read|Write|Edit|Glob|Grep|WebFetch|WebSearch|Agent|Task)\\s*\\{"))
+        then " [tool]" else "" end
+      ) · score=\(.value.Score | tostring | .[0:5])",
+      "    \(.value.Content[0:400])\(if (.value.Content | length) > 400 then "..." else "" end)",
+      ""
+    )
+  end
+'
 ```
 
 ---
@@ -82,7 +74,7 @@ session-indexer stats --db "$DB"
 
 ```
 Session ends (exit / /exit)
-  ├─ session-end.sh    — writes LLM summary to .claude/session-log.md
+  ├─ session-end.sh    — writes LLM summary to .agents/session-log.md
   └─ session-index.sh  — mines JSONL transcript → .agents/sessions.db (append-only)
 
 Next session opens
@@ -111,3 +103,36 @@ session-indexer stats --db .agents/sessions.db
 # Backfill embeddings (if Ollama + bge-m3 available)
 session-indexer embed --db .agents/sessions.db
 ```
+
+---
+
+## For orchestrators / subagent prep
+
+Subagents spawned via the Agent tool start cold — no SessionStart hook, no
+shared context, no awareness of this project's `.agents/sessions.db`. If a
+subagent's task would benefit from past decisions or discussions, query
+history yourself *before* spawning it, then fold the relevant results into
+the subagent's prompt (subagent prompts must be self-contained).
+
+```bash
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+DB="$PROJECT_ROOT/.agents/sessions.db"
+
+[[ -f "$DB" ]] && command -v session-indexer >/dev/null 2>&1 || exit 0
+
+session-indexer search "<query>" --db "$DB" --limit 5 --json | jq -r '
+  .[] | "[\(.SessionDate) · \(.Role)] \(.Content[0:300])"
+'
+```
+
+Limitations:
+- Subagent tool allowlists (`bug-fixer`, `code-generator`, `tech-lead`, etc.)
+  don't include the `Skill` tool — a spawned subagent can't invoke `/recall`
+  or this skill itself mid-task. This section is for the orchestrator to run
+  *before* spawning, not for the subagent to run on its own. Same root cause
+  as the general agent/skill boundary documented in
+  `~/wrk/common/skills/README.md`'s design principles — see that note
+  before assuming any skill will auto-trigger inside a subagent.
+- No tool-call noise filtering here (unlike `/recall <query>` and
+  `session-recall.sh`) — the orchestrator curates what goes into the
+  subagent prompt anyway; filter manually if a query pulls in noise.

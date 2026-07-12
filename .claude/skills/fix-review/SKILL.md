@@ -312,7 +312,7 @@ START_MS=$(python3 -c "import time;print(int(time.time()*1000))" 2>/dev/null || 
 # Fire all three in parallel — each writes its raw response to a file.
 # System message enforces JSON-only output even when the diff contains markdown
 # prose (spec/plan files) that confuses models into writing analysis text.
-REVIEW_SYSTEM_MSG="You are a senior code reviewer. Your entire response MUST be a raw JSON array — nothing else. Start with [ and end with ]. No prose, no markdown fences, no explanations before or after. If there are no issues output exactly: []"
+REVIEW_SYSTEM_MSG="You are a senior code reviewer. Your entire response MUST be a raw JSON array — nothing else. Start with [ and end with ]. No prose, no markdown fences, no explanations before or after. If there are no issues output exactly: []. Report at most 8 findings, most severe first; each body under 30 words. Do not include informational or 'no action needed' entries — only real issues."
 export REVIEW_SYSTEM_MSG
 
 run_round() {
@@ -323,8 +323,19 @@ run_round() {
   active_provider="$PROVIDER"
   active_url="$API_URL"
   active_key="$API_KEY"
-  payload=$(chat_payload_system "$active_provider" "$model" "$REVIEW_SYSTEM_MSG" "$PROMPT")
+  payload=$(chat_payload_system_no_think "$active_provider" "$model" "$REVIEW_SYSTEM_MSG" "$PROMPT" 4000)
   response=$(rest_post "$active_url" "$payload" "$active_key") || response='{"error":"call failed"}'
+
+  # Success but empty/whitespace content — reasoning model burned its
+  # budget before answering. Retry once with a tighter cap.
+  local content
+  content=$(chat_content "$active_provider" "$response")
+  if [ -z "$(printf '%s' "$content" | tr -d '[:space:]')" ] \
+     && [ -z "$(printf '%s' "$response" | jq -r '.error.code // empty' 2>/dev/null)" ]; then
+    echo "warn: round ${n} (${model}) returned empty content — retrying once with a tighter cap" >&2
+    payload=$(chat_payload_system_no_think "$active_provider" "$model" "$REVIEW_SYSTEM_MSG" "$PROMPT" 2000)
+    response=$(rest_post "$active_url" "$payload" "$active_key") || response='{"error":"call failed"}'
+  fi
 
   # Failover chain: OpenRouter → Ollama cloud → Ollama local.
   # Each tier is tried only if the previous one returned an error response.
@@ -341,7 +352,7 @@ run_round() {
     active_provider="ollama"
     active_url="$ollama_api_url"
     active_key="$OLLAMA_API_KEY"
-    payload=$(chat_payload_system "$active_provider" "$cloud_model" "$REVIEW_SYSTEM_MSG" "$PROMPT")
+    payload=$(chat_payload_system_no_think "$active_provider" "$cloud_model" "$REVIEW_SYSTEM_MSG" "$PROMPT" 4000)
     response=$(rest_post "$active_url" "$payload" "$active_key") || response='{"error":"ollama cloud failover failed"}'
     model="$cloud_model"
 
@@ -351,7 +362,7 @@ run_round() {
       local local_model
       local_model=$(yq -r ".reviewers.ollama_local.round_${n}.model" "$CONFIG" 2>/dev/null)
       echo "warn: round ${n} Ollama cloud error (code=${err_code}) — trying Ollama local (${local_model})" >&2
-      payload=$(chat_payload_system "$active_provider" "$local_model" "$REVIEW_SYSTEM_MSG" "$PROMPT")
+      payload=$(chat_payload_system_no_think "$active_provider" "$local_model" "$REVIEW_SYSTEM_MSG" "$PROMPT" 4000)
       response=$(rest_post "$active_url" "$payload" "$active_key") || response='{"error":"ollama local failover failed"}'
       model="$local_model"
     fi
@@ -370,7 +381,7 @@ wait
 
 > **Note on `&` + `wait`**: each background job runs in a subshell, so any
 > exported variables from `source` calls remain visible. The functions
-> defined above must be exported too — do `export -f run_round chat_payload chat_payload_system chat_content rest_post ollama_payload openrouter_payload openrouter_payload_system ollama_content openrouter_content` once before the parallel block, or inline the body of `run_round` in `bash -c '...' &` calls.
+> defined above must be exported too — do `export -f run_round chat_payload chat_payload_system chat_payload_system_no_think chat_content rest_post ollama_payload ollama_payload_system_no_think openrouter_payload openrouter_payload_system openrouter_payload_system_no_think ollama_content openrouter_content` once before the parallel block, or inline the body of `run_round` in `bash -c '...' &` calls.
 >
 > **Failover chain**: `run_round()` cascades OpenRouter → Ollama cloud → Ollama local on per-round errors. Cloud models come from `reviewers.ollama_cloud.round_N.model`; local models from `reviewers.ollama_local.round_N.model`. `OLLAMA_API_KEY` is loaded from `.env.local`. If Ollama local also fails, the round produces `[]` (treated as 0 findings). Failover is only attempted when `PROVIDER=openrouter`; if `PROVIDER=ollama` fails, there is no secondary.
 

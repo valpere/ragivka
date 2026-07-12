@@ -2,7 +2,7 @@
 # lib/rest.sh — REST helpers for skill scripts
 #
 # Usage:
-#   source .agents/skills/lib/rest.sh
+#   source .claude/skills/lib/rest.sh
 #
 #   RESPONSE=$(rest_post "$URL" "$PAYLOAD" "$API_KEY")          # Bearer auth
 #   RESPONSE=$(rest_post "$URL" "$PAYLOAD" "$API_KEY" "Token")  # custom scheme
@@ -72,6 +72,17 @@ ollama_content() {
   printf '%s' "$1" | jq -r '.message.content // empty'
 }
 
+# Like ollama_payload_system but sets think:false (top-level field on
+# /api/chat, not inside options) and a capped num_predict. Without this,
+# reasoning-capable cloud models (deepseek, kimi, etc.) can burn their whole
+# token budget on hidden thinking and return empty content on large prompts.
+ollama_payload_system_no_think() {
+  local num_predict="${4:-4000}"
+  jq -n --arg model "$1" --arg sys "$2" --arg prompt "$3" --argjson np "$num_predict" \
+    '{model:$model, messages:[{role:"system",content:$sys},{role:"user",content:$prompt}],
+      stream:false, think:false, options:{num_predict:$np}}'
+}
+
 # ---------------------------------------------------------------------------
 # OpenRouter — /api/v1/chat/completions (OpenAI-compatible)
 # Response: { "choices": [{ "message": { "content": "..." } }] }
@@ -125,11 +136,13 @@ chat_payload_system() {
 }
 
 # Like chat_payload_system but suppresses reasoning tokens on thinking models.
-# Use for DeepSeek-family models on OpenRouter; no-op on Ollama.
+# Use for DeepSeek-family models on OpenRouter, or any reasoning-capable
+# model on Ollama (deepseek, kimi, etc. via /api/chat's top-level think field).
+# Optional 5th arg: num_predict cap, Ollama branch only (default 4000).
 chat_payload_system_no_think() {
   case "$1" in
     openrouter) openrouter_payload_system_no_think "$2" "$3" "$4" ;;
-    *)          ollama_payload_system              "$2" "$3" "$4" ;;
+    *)          ollama_payload_system_no_think      "$2" "$3" "$4" "$5" ;;
   esac
 }
 
