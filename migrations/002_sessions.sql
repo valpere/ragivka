@@ -6,6 +6,7 @@
 -- ---------------------------------------------------------------------------
 -- updated_at trigger (shared by SESSION)
 -- ---------------------------------------------------------------------------
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -13,6 +14,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 -- ---------------------------------------------------------------------------
 -- SESSION

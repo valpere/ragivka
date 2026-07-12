@@ -2,6 +2,9 @@
 -- Phase 2b: DOCUMENT and CHUNK tables for the RAG knowledge layer (FR-8, FR-9, FR-10).
 -- Documents are tenant-scoped; chunks carry composite FK to enforce tenant isolation (NFR-16).
 
+-- Required for the CHUNK.embedding VECTOR(1024) column below (FR-9).
+CREATE EXTENSION IF NOT EXISTS "vector";
+
 -- ---------------------------------------------------------------------------
 -- DOCUMENT — raw document registry; S3 holds the actual bytes (FR-20)
 -- ---------------------------------------------------------------------------
