@@ -37,6 +37,9 @@ go.work.sum
 !.claude/**
 .claude/settings.local.json
 
+# Temporary git worktrees (created by Claude Code / subagents during /ship)
+.claude/worktrees/
+
 # Session recall
 .claude/session-log.md
 
