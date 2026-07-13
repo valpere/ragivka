@@ -22,6 +22,7 @@ description: "ragivka ship pipeline: issue → implement → review → merge �
   → merge PR             (/ship owns the merge)
   → post comment         (summary: what changed, PR link)
   → close issue
+  → log to /self-learn (best-effort)
   → final report
 ```
 
@@ -250,7 +251,24 @@ On failure: warn, ask user to close {ISSUE_URL} manually.
 
 ---
 
-## STEP 6: Final Report
+## STEP 6: Log to /self-learn (if installed)
+
+Skip silently if `.claude/skills/self-learn/` doesn't exist in this project.
+
+Log one entry via `/self-learn log`, classified by what actually happened
+this run:
+- Smooth run, zero `/fix-review` escalations → **win**
+- `/fix-review` caught something that should have been prevented earlier
+  (wrong pattern, missed edge case, convention violation) → **mistake**
+- STEP 0.5 ambiguity analysis surfaced a decision that would otherwise have
+  produced a wrong implementation → **win**
+
+If the log call fails or `/self-learn` isn't installed, don't block the
+pipeline on it — note it in the final report's Warnings and move on.
+
+---
+
+## STEP 7: Final Report
 
 ```
 ## /ship complete — #{ISSUE_NUMBER} {ISSUE_TITLE}
@@ -271,6 +289,7 @@ Pipeline:
 ✓ PR merged (squash)
 ✓ Completion comment posted
 ✓ Issue closed
+✓ Logged to /self-learn (or skipped — not installed)
 ```
 
 Append **Warnings** for any skipped items or non-fatal failures.
@@ -287,3 +306,4 @@ Append **Warnings** for any skipped items or non-fatal failures.
 6. Tracker updates are best-effort — surface failures, never silently skip.
 7. 30-minute merge timeout — stop and report. Never loop indefinitely.
 8. Docs-only PRs skip /fix-review — the Pyramid has nothing to evaluate.
+9. `/self-learn` logging (STEP 6) is best-effort — never block completion on it.
