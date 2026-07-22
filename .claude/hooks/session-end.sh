@@ -164,8 +164,8 @@ Rules: 10-20 bullets total, Ukrainian for content, English for code/file names."
 try_opencode() {
   local models=(
     "ollama/glm-5.2:cloud"
-    "ollama/kimi-k2.5:cloud"
-    "ollama/minimax-m2.5:cloud"
+    "ollama/kimi-k2.6:cloud"
+    "ollama/minimax-m2.7:cloud"
     "ollama/qwen3.5:cloud"
   )
   command -v opencode &>/dev/null || return 1
