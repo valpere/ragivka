@@ -129,7 +129,7 @@ Session ends (exit / /exit)
   └─ Stop hook: .agents/hooks/session-end.sh   (if configured)
        ├─ Skip if /session-end ran within 2h (file mtime check)
        ├─ Try agy -p  (Gemini 3.5 Flash Low → Medium → High → Gemini 3.1 Pro)
-       ├─ Try opencode run --format json  (glm-5.2:cloud, kimi-k2.5:cloud, minimax-m2.5:cloud, qwen3.5:cloud)
+       ├─ Try opencode run --format json  (glm-5.2:cloud, kimi-k2.6:cloud, minimax-m2.7:cloud, qwen3.5:cloud)
        └─ Fallback: raw transcript excerpt
 
 Next session opens
