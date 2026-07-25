@@ -17,7 +17,7 @@ require (
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/riverqueue/river v0.40.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.40.0
-	github.com/riverqueue/river/rivertype v0.40.0
+	github.com/riverqueue/river/rivertype v0.41.0
 	github.com/xuri/excelize/v2 v2.11.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.44.0
