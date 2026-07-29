@@ -93,6 +93,10 @@ If `provider: ask`, prompt the user once and persist their choice into
 ```bash
 source ~/.agents/skills/lib/env.sh
 source ~/.agents/skills/lib/rest.sh
+# External-agent fallback adapters (cursor-agent, omp, codex, opencode, kilo).
+# Safe to source even when reviewers.external_agents is not configured —
+# the lib defines functions only; no side effects until invoked.
+source ~/.agents/skills/lib/agents.sh
 
 case "$PROVIDER" in
   openrouter) load_env_key OPENROUTER_API_KEY; API_KEY="$OPENROUTER_API_KEY" ;;
@@ -170,6 +174,29 @@ without timing out.
 
 In Step 11 final summary, the `### ⚠️ Provider failover` section must name the
 tier that was used (`ollama_cloud` or `ollama_local`) and the models.
+
+**External-agent fallback (tier 3):** When both Ollama tiers fail, try the
+ordered `reviewers.external_agents` list (cursor-agent → omp → codex →
+opencode → kilo by default; each invocation is read-only and uses the same
+prompt file). External agents do **not** depend on Ollama — they have their
+own CLIs/infrastructure and are reachable even when Ollama cloud is down.
+Adapters live in `.claude/skills/lib/agents.sh` (must be sourced alongside
+`env.sh` / `rest.sh`). Probe whether the section exists before invoking:
+
+```bash
+EXTERNAL_AGENTS_EXIST=$(yq -r '.reviewers.external_agents | type' "$CONFIG" 2>/dev/null \
+  | grep -q '^sequence' && echo yes || echo no)
+```
+
+`CLOUD_KNOWN_BAD=1` is set when the Ollama cloud call returned a 5xx or
+`User not found`/401-equivalent probe failure — short-circuits the
+external-agents cascade for that round to save wall time. Per-round errors
+inside `run_round()` below also cascade through external agents; the
+final response that wins is whichever tier first returns a non-empty
+JSON-array-validated payload. In Step 11 final summary, the
+`### ⚠️ Provider failover` section must name the external agent used
+(`external: cursor-agent` etc.) and the model if it differs from the
+configured default.
 
 ---
 
@@ -365,6 +392,35 @@ run_round() {
       payload=$(chat_payload_system_no_think "$active_provider" "$local_model" "$REVIEW_SYSTEM_MSG" "$PROMPT" 4000)
       response=$(rest_post "$active_url" "$payload" "$active_key") || response='{"error":"ollama local failover failed"}'
       model="$local_model"
+    fi
+  fi
+
+  # Tier 3 fallback: external agents (cursor-agent, omp, codex, opencode, kilo).
+  # ragivka is `provider: ollama` only — this branch fires after Ollama cloud
+  # fails AND Ollama local also fails. External agents have their own CLIs/
+  # infrastructure and do not depend on Ollama being reachable. Each agent
+  # receives the same prompt via stdin (read-only, no shell exec) and returns
+  # plain text; we wrap it into a JSON-array suggestion-severity finding so
+  # the existing parse_round() / jq pipeline works unchanged downstream.
+  err_code=$(printf '%s' "$response" | jq -r '.error.code // empty' 2>/dev/null)
+  if [ -n "$err_code" ] && [ "$EXTERNAL_AGENTS_EXIST" = "yes" ] && [ "${CLOUD_KNOWN_BAD:-0}" != "1" ]; then
+    local prompt_file ext_response
+    prompt_file="$RUN_DIR/round_${n}.prompt"
+    printf '%s' "$PROMPT" > "$prompt_file"
+    echo "warn: round ${n} both Ollama tiers failed — trying external agents" >&2
+    if ext_response=$(try_external_agents "$n" "$prompt_file" "$CONFIG") \
+         && [ -n "$ext_response" ]; then
+      # try_external_agents prints "<agent_name>\t<raw_json_or_text>" on success.
+      local ext_name ext_raw
+      ext_name=$(printf '%s' "$ext_response" | awk -F'\t' '{print $1}')
+      ext_raw=$(printf '%s' "$ext_response" | awk -F'\t' '{$1=""; sub(/^\t/,""); print}')
+      # Wrap plain-text agent output in a JSON array so the existing
+      # parse_round()/jq pipeline works unchanged. The arbiter still gets
+      # an array — just one entry, body = raw agent output.
+      response=$(jq -nc --arg body "$ext_raw" --arg agent "$ext_name" \
+        '[{file:"(external)",line:0,layer:2,severity:"suggestion",body:("[" + $agent + "] " + $body)}]')
+      model="external: $ext_name"
+      FAILOVER_TIER="external_agents"
     fi
   fi
 
@@ -720,17 +776,42 @@ Telemetry: ${TELEMETRY_FILE}
 ```
 
 **Failover reporting (mandatory):** If `FAILOVER_TIER` is non-empty, always append a
-`### ⚠️ Provider failover` section immediately after the summary block:
+`### ⚠️ Provider failover` section immediately after the summary block. Three
+templates below, picked by tier — ragivka is `provider: ollama` only, so
+all three describe Ollama-fallback behaviour. Tier 3 is the external-agents
+fallback.
 
 ```
 ### ⚠️ Provider failover
+```
 
-Primary provider (openrouter) was unavailable.
-Tier used: ${FAILOVER_TIER}   # "ollama_cloud" = Ollama cloud (tier 1), "ollama_local" = Ollama local (tier 2)
-Reason: ${FAILOVER_REASON}    # e.g. "402 Insufficient credits", "network error"
+For tier `ollama_cloud`:
+```
+Ollama cloud (tier 1) was unavailable; rounds cascaded to Ollama local.
+Reason: ${FAILOVER_REASON}    # e.g. "402 Insufficient credits", "network error", "User not found"
 Models: ${M1} | ${M2} | ${M3}
 
-Action required: top up OpenRouter credits or switch provider in config.yaml.
+Action required: top up Ollama cloud quota or switch reviewer_set in config.yaml.
+```
+
+For tier `ollama_local`:
+```
+Ollama cloud (tier 1) and Ollama local (tier 2) both failed to respond.
+Reason: ${FAILOVER_REASON}
+Models: ${M1} | ${M2} | ${M3}
+
+Action required: confirm `ollama serve` is running for tier 2, or fix cloud credentials.
+```
+
+For tier `external_agents`:
+```
+Both Ollama tiers (cloud + local) returned errors; rounds fell through to
+external-agent tier 3.
+Fallback succeeded via "${EXTERNAL_AGENT_USED}" — first responder in the
+ordered reviewers.external_agents list (cursor-agent → omp → codex → opencode → kilo).
+Note: external-agent output is wrapped into a single suggestion-severity
+finding per round; treat as low-confidence signal alongside the failed
+primary rounds.
 ```
 
 This section is **never omitted** when failover occurred. Bury it in the
