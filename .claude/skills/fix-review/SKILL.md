@@ -91,12 +91,12 @@ If `provider: ask`, prompt the user once and persist their choice into
 **Load API key** for the active provider:
 
 ```bash
-source ~/.agents/skills/lib/env.sh
-source ~/.agents/skills/lib/rest.sh
+source .claude/skills/lib/env.sh
+source .claude/skills/lib/rest.sh
 # External-agent fallback adapters (cursor-agent, omp, codex, opencode, kilo).
 # Safe to source even when reviewers.external_agents is not configured —
 # the lib defines functions only; no side effects until invoked.
-source ~/.agents/skills/lib/agents.sh
+source .claude/skills/lib/agents.sh
 
 case "$PROVIDER" in
   openrouter) load_env_key OPENROUTER_API_KEY; API_KEY="$OPENROUTER_API_KEY" ;;
