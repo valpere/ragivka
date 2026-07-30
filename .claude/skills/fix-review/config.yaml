@@ -42,11 +42,12 @@ reviewers:
   # Model names verified via `opencode models` / `cursor-agent --help` etc.
   # before being listed here.
   external_agents:
-    - cursor-agent
-    - omp
-    - codex
-    - opencode
-    - kilo
+    - { tool: cursor-agent }
+    - { tool: agy, model: "Gemini 3.5 Flash (Low)" }
+    - { tool: omp }
+    - { tool: codex }
+    - { tool: opencode }
+    - { tool: kilo }
 
 # cloud  — use reviewers.ollama_cloud (requires OLLAMA_API_KEY)
 # local  — use reviewers.ollama_local (requires running `ollama serve`)
