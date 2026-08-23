@@ -9,7 +9,7 @@ import (
 type RouterPolicy struct {
 	// Models maps each TaskKind to a preferred model name.
 	// Empty entries fall through to Default.
-	Models  map[TaskKind]string
+	Models map[TaskKind]string
 	// Default is the model used when no task-specific entry exists.
 	Default string
 	// Fallback is tried once if the primary model returns an error.

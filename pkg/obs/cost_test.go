@@ -125,7 +125,7 @@ func TestLogRequestCost(t *testing.T) {
 
 func TestGetModelPricing(t *testing.T) {
 	tests := []struct {
-		model      string
+		model       string
 		expectFound bool
 	}{
 		{"gpt-4o", true},

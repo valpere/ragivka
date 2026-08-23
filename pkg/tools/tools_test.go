@@ -18,7 +18,7 @@ type echoTool struct {
 	kind tools.ToolKind
 }
 
-func (e *echoTool) Name() string { return e.name }
+func (e *echoTool) Name() string         { return e.name }
 func (e *echoTool) Kind() tools.ToolKind { return e.kind }
 func (e *echoTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
 	return args, nil
