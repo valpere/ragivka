@@ -24,7 +24,7 @@ type Config struct {
 // NewPool initializes a new PostgreSQL connection pool via pgxpool.
 // NFR-3: Connection Pooling to prevent exhaustion during worker spikes.
 func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
-	// Start with an empty config and set fields directly to prevent DSN injection 
+	// Start with an empty config and set fields directly to prevent DSN injection
 	// from special characters in credentials (e.g., passwords with '@' or ':').
 	sslMode := cfg.SSLMode
 	if sslMode == "" {
@@ -50,7 +50,7 @@ func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 	// Configure pool sizing
 	poolConfig.MaxConns = cfg.MaxConns
 	poolConfig.MinConns = cfg.MinConns
-	
+
 	// Max connection lifetime to gracefully handle network issues
 	poolConfig.MaxConnLifetime = 1 * time.Hour
 	poolConfig.MaxConnIdleTime = 30 * time.Minute

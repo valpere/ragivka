@@ -104,4 +104,3 @@ func TestJobsHelpers_citationRefsZeroValue(t *testing.T) {
 		t.Error("chunkIDs on empty non-nil slice should return non-nil slice")
 	}
 }
-

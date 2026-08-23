@@ -63,4 +63,3 @@ func NewIngestDocumentJob(tenantID, docID uuid.UUID, s3Key, docType string) Inge
 		DocType:    docType,
 	}
 }
-

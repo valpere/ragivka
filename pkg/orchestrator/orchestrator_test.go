@@ -72,7 +72,8 @@ func newMockSessions(initial ...*runtime.Session) *mockSessions {
 }
 
 func (m *mockSessions) GetByID(_ context.Context, id uuid.UUID) (*runtime.Session, error) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	s, ok := m.sessions[id]
 	if !ok {
 		return nil, runtime.ErrNotFound
@@ -82,8 +83,11 @@ func (m *mockSessions) GetByID(_ context.Context, id uuid.UUID) (*runtime.Sessio
 }
 
 func (m *mockSessions) Create(_ context.Context, s *runtime.Session) error {
-	m.mu.Lock(); defer m.mu.Unlock()
-	cp := *s; m.sessions[cp.ID] = &cp; return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *s
+	m.sessions[cp.ID] = &cp
+	return nil
 }
 func (m *mockSessions) GetActiveByUserID(_ context.Context, _ uuid.UUID) (*runtime.Session, error) {
 	return nil, runtime.ErrNotFound
@@ -111,16 +115,21 @@ type mockMessages struct {
 }
 
 func (m *mockMessages) Create(_ context.Context, msg *runtime.Message) error {
-	m.mu.Lock(); defer m.mu.Unlock()
-	cp := *msg; m.messages = append(m.messages, &cp); return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := *msg
+	m.messages = append(m.messages, &cp)
+	return nil
 }
 
 func (m *mockMessages) ListForSession(_ context.Context, sessID uuid.UUID, _ int) ([]*runtime.Message, error) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var out []*runtime.Message
 	for _, msg := range m.messages {
 		if msg.SessionID == sessID {
-			cp := *msg; out = append(out, &cp)
+			cp := *msg
+			out = append(out, &cp)
 		}
 	}
 	return out, nil

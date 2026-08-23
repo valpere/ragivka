@@ -21,8 +21,8 @@ type echoToolTJ struct {
 	kind tools.ToolKind
 }
 
-func (e *echoToolTJ) Name() string                                           { return e.name }
-func (e *echoToolTJ) Kind() tools.ToolKind                                   { return e.kind }
+func (e *echoToolTJ) Name() string         { return e.name }
+func (e *echoToolTJ) Kind() tools.ToolKind { return e.kind }
 func (e *echoToolTJ) Execute(_ context.Context, a json.RawMessage) (json.RawMessage, error) {
 	return a, nil
 }

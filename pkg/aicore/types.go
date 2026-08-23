@@ -4,7 +4,7 @@ import "context"
 
 // Message is a single turn in a conversation, matching the Ollama/OpenAI chat format.
 type Message struct {
-	Role    string `json:"role"`    // "user" | "assistant" | "system"
+	Role    string `json:"role"` // "user" | "assistant" | "system"
 	Content string `json:"content"`
 }
 
@@ -20,7 +20,7 @@ const (
 
 // GenerateRequest is the provider-agnostic request to the LLM layer.
 type GenerateRequest struct {
-	Model       string    // optional override; empty = use router/client default
+	Model       string // optional override; empty = use router/client default
 	Messages    []Message
 	MaxTokens   int
 	Temperature float64

@@ -22,7 +22,7 @@ import (
 type mockSessionRepo struct {
 	mu                 sync.Mutex
 	sessions           map[uuid.UUID]*Session
-	transitionCtxs     []context.Context // contexts passed to each Transition call
+	transitionCtxs     []context.Context   // contexts passed to each Transition call
 	forceTransitionErr map[uuid.UUID]error // per-session error injection for Transition
 }
 
