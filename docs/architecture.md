@@ -274,9 +274,6 @@ erDiagram
     
     USER ||--o{ SESSION : participates_in
     SESSION ||--o{ MESSAGE : contains
-    SESSION ||--o{ RIVER_JOB : triggers
-    SESSION ||--o{ AUDIT_LOG : tracks
-    USER ||--o{ AUDIT_LOG : performs
     
     DOCUMENT ||--o{ CHUNK : splits_into
     DOCUMENT ||--o{ ARTIFACT : generates
@@ -286,8 +283,8 @@ erDiagram
 *   **USER:** An end-user interacting via a Channel. Contains `channel_type` (telegram/web) and `channel_id` (e.g., Telegram user ID).
 *   **SESSION:** The FSM container. Contains `state` enum, `version` (optimistic locking), `orchestration_tier` (L0–L3), `channel`, and `expires_at`.
 *   **MESSAGE:** Individual chat turns. Contains `role` (user/assistant/system), `content`, `citation_refs[]`, `token_count`, and optional `job_id` for async replies.
-*   **RIVER_JOB:** Tracks async tasks. Links to a Session via `session_id` and includes `tenant_id`, `idempotency_key`, `payload` (JSONB), and `attempt` count.
-*   **AUDIT_LOG:** Immutable ledger recording every Write Tool execution. Contains `tool_name`, `idempotency_key`, request/response hash, and optional `approval_record` for HITL actions.
+*   **Async jobs:** stored in River's own `river_job` table (managed by River, not by `migrations/`). Job args carry `tenant_id` and `session_id`; `MESSAGE.job_id` links async replies back.
+*   **AUDIT_LOG (planned, not yet migrated):** Immutable ledger recording every Write Tool execution. Contains `tool_name`, `idempotency_key`, request/response hash, and optional `approval_record` for HITL actions.
 *   **DOCUMENT:** A raw file uploaded to the Knowledge Layer. Contains S3 key, `version`, `ingestion_status` (pending/indexed/stale), and `tenant_id`.
 *   **CHUNK:** Text segments belonging to a Document. Contains `document_id`, ordinal position, `content`, `vector` (pgvector), `tsvector` (BM25), and metadata for hybrid search filtering.
 *   **PROMPT_VERSION:** Version-controlled system prompts. Contains `name`, `version`, `content`, and `created_at`.

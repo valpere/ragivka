@@ -76,6 +76,7 @@ Interfaces (Telegram, Web Widget)
 
 **Phase 3 — Orchestration + Tools (complete):**
 - `pkg/tools/` — Tool Registry (Read/Draft/Write kind boundary), `AuditLogger` (idempotency + SHA-256 audit trail), `HITLGate`.
+- **Write-tool execution path is library code only — not wired end to end.** `ExecuteToolWorker` (`pkg/runtime/tool_job.go`) is not registered in `pkg/runtime/worker.go`, nothing enqueues `execute_tool`, no `tools.AuditWriter` implementation and no `AUDIT_LOG` migration exist, no tools are registered, and `graph.ToolCallNode` is a pass-through. Covered by mock-based tests only. Wiring (migration, Postgres `AuditWriter`, worker registration, enqueue path, FSM-transition audit per NFR-15) is deferred until the first real Write Tool lands; it ships as one task with that tool.
 - `pkg/orchestrator/` — `TieredOrchestrator` dispatching L0 (direct), L1 (sync RAG + structured output + HITL gate), L2/L3 (async River job) handlers; `NewMessageHandler` for `POST /v1/sessions/{id}/messages`.
 - `pkg/graph/` — DAG engine for L3 multi-agent workflows (`GraphEngine.Execute`, loop-back guard via `MaxIterations`, `NodeRegistry` for JSON-serialisable `GraphDef`).
 
@@ -110,7 +111,7 @@ Both `cmd/server` and `cmd/worker` call `obs.InitTracer` on startup. If `OTEL_EX
 
 ### Data model overview
 
-All entities are scoped by `tenant_id`. Core tables: `TENANT`, `USER`, `SESSION` (FSM container with `version` for optimistic locking), `MESSAGE`, `RIVER_JOB`, `DOCUMENT`, `CHUNK` (pgvector + tsvector), `PROMPT_VERSION`, `ARTIFACT`, `AUDIT_LOG`. See `docs/architecture.md` for the full ER diagram and FSM state transitions.
+All entities are scoped by `tenant_id`. Core tables: `TENANT`, `USER`, `SESSION` (FSM container with `version` for optimistic locking), `MESSAGE`, `DOCUMENT`, `CHUNK` (pgvector + tsvector), `PROMPT_VERSION`, `ARTIFACT`. Async jobs live in River's own `river_job` table (managed by River, not by `migrations/`). `AUDIT_LOG` is specified (NFR-15) but not yet migrated — see Phase 3 above. See `docs/architecture.md` for the full ER diagram and FSM state transitions.
 
 ### FSM states
 
