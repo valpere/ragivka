@@ -712,8 +712,30 @@ arbiter row.
 **Append (fail-open):**
 ```bash
 if [ "$TELEMETRY_ENABLED" = "true" ]; then
+  TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  for N in 1 2 3; do
+    meta="$RUN_DIR/round_${N}.meta"
+    [ -f "$meta" ] || continue
+    # parse_ok:false only for a non-empty invalid answer; empty content is 0 findings, parse_ok:true
+    PARSE_OK=true; [ -f "$RUN_DIR/round_${N}.unparsed.txt" ] && PARSE_OK=false
+    jq -cn \
+      --arg     ts       "$TIMESTAMP" \
+      --argjson pr       "$PR_NUMBER" \
+      --argjson round    "$N" \
+      --arg     model    "$(sed -n 1p "$meta")" \
+      --arg     provider "$ACTIVE_PROVIDER" \
+      --argjson findings "$(jq 'length' "$RUN_DIR/round_${N}.findings.json")" \
+      --argjson parse_ok "$PARSE_OK" \
+      --argjson duration "$(sed -n 2p "$meta")" \
+      '{timestamp:$ts, pr_number:$pr, round_number:$round, model:$model,
+        provider:$provider, findings_count:$findings, parse_ok:$parse_ok,
+        prompt_tokens:null, completion_tokens:null, estimated_cost_usd:null,
+        duration_ms:$duration}' \
+      >> "$TELEMETRY_FILE" 2>/dev/null \
+      || echo "warn: telemetry write failed for round ${N} — continuing" >&2
+  done
   jq -cn ... '{...}' >> "$TELEMETRY_FILE" 2>/dev/null || \
-    echo "warn: telemetry write failed — continuing" >&2
+    echo "warn: arbiter telemetry write failed — continuing" >&2   # arbiter entry, fields above
 fi
 ```
 
@@ -787,6 +809,17 @@ Contract* near the top of this skill.
 ---
 
 ## STEP 11: Final Summary (printed)
+
+`UNPARSED` lists the rounds whose answer was kept in `round_N.unparsed.txt`:
+```bash
+UNPARSED=""
+for n in 1 2 3; do
+  [ -f "$RUN_DIR/round_${n}.unparsed.txt" ] || continue
+  [ -n "$UNPARSED" ] && UNPARSED+="; "
+  UNPARSED+="round ${n} ($(head -1 "$RUN_DIR/round_${n}.meta"))"
+done
+UNPARSED="${UNPARSED:-none}"   # add "— carried over by arbiter" per round when printing
+```
 
 ```
 ## /fix-review (parallel) — PR #${PR_NUMBER}
