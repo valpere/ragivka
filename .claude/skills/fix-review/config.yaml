@@ -47,7 +47,7 @@ reviewers:
   # before being listed here.
   external_agents:
     - { tool: cursor-agent }
-    - { tool: agy, model: "Gemini 3.5 Flash (Low)" }
+    - { tool: agy, model: "Gemini 3.8 Flash (Low)" }
     - { tool: omp }
     - { tool: codex }
     - { tool: opencode }

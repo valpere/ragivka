@@ -1,25 +1,25 @@
 ---
-name: ship
-description: "ragivka ship pipeline: issue → implement → review → merge → close. Usage: /ship [--yes|-y] [issue-id | title]"
+name: deliver
+description: "ragivka deliver pipeline: issue → implement → review → merge → close. Usage: /deliver [--yes|-y] [issue-id | title]"
 ---
 
-# Skill: /ship
+# Skill: /deliver
 # Issue → Merged PR Pipeline
 
 ```
-/ship                    → auto-select next open issue (asks confirmation)
-/ship --yes              → auto-select and proceed, skip UI prompts
-/ship -y                 → same as --yes
-/ship {issue-id}         → ship a specific issue by number
-/ship {issue title}      → find by title, then ship
-/ship --yes {issue-id}   → skip UI prompts (technical ambiguities always ask)
+/deliver                    → auto-select next open issue (asks confirmation)
+/deliver --yes              → auto-select and proceed, skip UI prompts
+/deliver -y                 → same as --yes
+/deliver {issue-id}         → ship a specific issue by number
+/deliver {issue title}      → find by title, then ship
+/deliver --yes {issue-id}   → skip UI prompts (technical ambiguities always ask)
 
   → resolve issue        (fetch title + description)
   → analyze ambiguities  (scan description + codebase → ask decisions before coding)
   → mark in-progress
   → code-generator       (implement → tests → review agents → simplify → docs → PR)
   → /fix-review          (multi-model rounds + Claude Arbiter — does NOT merge)
-  → merge PR             (/ship owns the merge)
+  → merge PR             (/deliver owns the merge)
   → post comment         (summary: what changed, PR link)
   → close issue
   → log to /self-learn (best-effort)
@@ -204,7 +204,7 @@ then poll every 30s (max 30 min).
 
 If conflicts: stop — "PR #{PR_NUMBER} has merge conflicts. Resolve and re-run."
 
-**Timeout:** 30 min. If still open: ask user to merge manually, then re-run `/ship {ISSUE_NUMBER}`
+**Timeout:** 30 min. If still open: ask user to merge manually, then re-run `/deliver {ISSUE_NUMBER}`
 to complete the tracker update.
 
 Verify:
@@ -271,7 +271,7 @@ pipeline on it — note it in the final report's Warnings and move on.
 ## STEP 7: Final Report
 
 ```
-## /ship complete — #{ISSUE_NUMBER} {ISSUE_TITLE}
+## /deliver complete — #{ISSUE_NUMBER} {ISSUE_TITLE}
 
 Issue:   {ISSUE_URL}  (closed)
 PR:      {PR_URL}  (merged, branch deleted)
@@ -301,8 +301,8 @@ Append **Warnings** for any skipped items or non-fatal failures.
 1. Issue must be ready/approved before shipping — not auto-verified.
 2. One PR per issue — reuse existing branch PR if it exists.
 3. Never force-push — rebase if branch diverged from main.
-4. **`/ship` owns the merge (STEP 3), not `/fix-review`.**
-5. All review agents run inside code-generator — do not re-launch in `/ship`.
+4. **`/deliver` owns the merge (STEP 3), not `/fix-review`.**
+5. All review agents run inside code-generator — do not re-launch in `/deliver`.
 6. Tracker updates are best-effort — surface failures, never silently skip.
 7. 30-minute merge timeout — stop and report. Never loop indefinitely.
 8. Docs-only PRs skip /fix-review — the Pyramid has nothing to evaluate.
