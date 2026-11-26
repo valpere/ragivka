@@ -144,7 +144,7 @@ The issue is now the canonical record.
 ## Step 8 — Report and stop
 
 Report the created issue URL and confirm plan deletion. Stop.
-Implementation is triggered separately via `/ship`.
+Implementation is triggered separately via `/deliver`.
 
 ---
 

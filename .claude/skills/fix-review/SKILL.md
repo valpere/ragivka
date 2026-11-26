@@ -333,11 +333,14 @@ Substitute:
 
 ```bash
 DIFF=$(gh pr diff "${PR_NUMBER}")
-PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s|{PROJECT_CONTEXT}|$PROJECT_CONTEXT|" | sed "s|{DIFF}|$DIFF|")
+# Plain bash substitution: sed breaks on newlines or '|' in the diff/context and
+# would leave PROMPT empty. The quoted replacement keeps '&' literal (bash 5.2).
+PROMPT="${PROMPT_TEMPLATE//\{PROJECT_CONTEXT\}/"$PROJECT_CONTEXT"}"
+PROMPT="${PROMPT//\{DIFF\}/"$DIFF"}"
 
 # Output dir for this run
 RUN_DIR=$(mktemp -d -t fix-review-XXXX)
-START_MS=$(python3 -c "import time;print(int(time.time()*1000))" 2>/dev/null || echo $(($(date +%s) * 1000)))
+START_MS=$(($(date +%s%N) / 1000000))
 
 # Fire all three in parallel — each writes its raw response to a file.
 # System message enforces JSON-only output even when the diff contains markdown
@@ -348,7 +351,7 @@ export REVIEW_SYSTEM_MSG
 run_round() {
   local n="$1" model="$2"
   local r_start r_end
-  r_start=$(python3 -c "import time;print(int(time.time()*1000))" 2>/dev/null || echo $(($(date +%s) * 1000)))
+  r_start=$(($(date +%s%N) / 1000000))
   local payload response active_provider active_url active_key
   active_provider="$PROVIDER"
   active_url="$API_URL"
@@ -449,7 +452,7 @@ run_round() {
     FAILOVER_TIER="ollama_local"
   fi
 
-  r_end=$(python3 -c "import time;print(int(time.time()*1000))" 2>/dev/null || echo $(($(date +%s) * 1000)))
+  r_end=$(($(date +%s%N) / 1000000))
   printf '%s' "$response"   > "$RUN_DIR/round_${n}.raw.json"
   printf '%s\n%s' "$model"  "$((r_end - r_start))" > "$RUN_DIR/round_${n}.meta"
 }
@@ -482,8 +485,15 @@ parse_round() {
   content=$(printf '%s' "$content" | sed -E 's/^```(json)?//; s/```$//')
   # Validate as JSON array.
   if ! echo "$content" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    # Keep the raw answer for the arbiter (Step 6); [] only keeps aggregation working.
+    # Such a round is NOT clean: Step 11 reports it, telemetry has parse_ok:false.
     echo "[]" > "$RUN_DIR/round_${n}.findings.json"
-    echo "warn: round ${n} response not a JSON array — treating as 0 findings" >&2
+    if [ -n "$(printf '%s' "$content" | tr -d '[:space:]')" ]; then
+      printf '%s\n' "$content" > "$RUN_DIR/round_${n}.unparsed.txt"
+      echo "warn: round ${n} response is not a valid JSON array — kept in round_${n}.unparsed.txt for the arbiter" >&2
+    else
+      echo "warn: round ${n} returned empty content — 0 findings" >&2
+    fi
     return
   fi
   echo "$content" > "$RUN_DIR/round_${n}.findings.json"
@@ -491,8 +501,9 @@ parse_round() {
 parse_round 1; parse_round 2; parse_round 3
 ```
 
-If a round returned prose: skip its findings (already 0). Don't retry —
-parallel mode runs once.
+If a round returned prose or broken JSON, its findings are not lost: the raw
+answer is in `round_N.unparsed.txt` and the arbiter reads it (Step 6). Don't
+retry the model and don't repair the JSON with regexes — parallel mode runs once.
 
 ---
 
@@ -550,6 +561,10 @@ that obviously points to a real bug should be confirmed. A 3-vote
 finding that contradicts the project's load-bearing rules
 (`.agents/context-essentials.md` / `CLAUDE.md`) should be dismissed
 with reason.
+
+**Unparsed rounds**: for each `$RUN_DIR/round_*.unparsed.txt`, read the
+model's answer and carry its findings over by hand, as that model's vote
+(same file/line dedupe as Step 5). Note in Step 11 whether it was carried over.
 
 **Independent scan**: also walk the full diff once and flag anything
 all three models missed (rare but high-value).
@@ -613,7 +628,7 @@ git commit -m "fix(pr#${PR_NUMBER}): address /fix-review findings
 
 $(jq -r '.[] | select(.ruling=="CONFIRM" or .ruling=="ESCALATE") | "- \(.file):\(.line) — \(.body[0:80])"' "$RUN_DIR/arbiter.json" | head -20)
 
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
+<attribution line from the current session's instructions>"
 
 git push
 ```
@@ -658,6 +673,7 @@ One entry per round + one arbiter entry, all in the same run.
   "model": "deepseek/deepseek-v3.2",
   "provider": "openrouter",
   "findings_count": 4,
+  "parse_ok": true,          // false: answer was not a valid JSON array (round_N.unparsed.txt)
   "prompt_tokens": 12000,
   "completion_tokens": 600,
   "estimated_cost_usd": 0.003348,
@@ -778,6 +794,8 @@ Contract* near the top of this skill.
 Provider: ${ACTIVE_PROVIDER}
 Models:   ${MODEL_R1} | ${MODEL_R2} | ${MODEL_R3}
 Wall time: ${WALL_TIME_MS} ms (vs sum-sequential ${SUM_SEQ_MS} ms — ${SPEEDUP}× speedup)
+
+Unparsed:  ${UNPARSED}          # e.g. "round 1 (glm-5.2:cloud) — carried over by arbiter"; "none"
 
 Aggregated findings: ${TOTAL}
   3/3 votes: ${THREE_VOTE} (high confidence)
