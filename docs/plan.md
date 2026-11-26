@@ -18,7 +18,7 @@ This document outlines the phased approach to building the Ragivka framework, ad
 
 ## Phase 3: Tooling & Orchestration
 
-1.  **Tool Registry & Audit (FR-16, FR-17, FR-18, NFR-10, NFR-15):** Implement the Read/Draft/Write Tool boundaries. Enforce strict `AUDIT_LOG` entries for all write actions. Build HITL approval gates, low-confidence escalation routes, and read-tool caching.
+1.  **Tool Registry & Audit (FR-16, FR-17, FR-18, NFR-10, NFR-15):** Implement the Read/Draft/Write Tool boundaries. Enforce strict `AUDIT_LOG` entries for all write actions. Build HITL approval gates, low-confidence escalation routes, and read-tool caching. *Status:* registry, `AuditLogger`, `HITLGate` and `ExecuteToolWorker` exist as library code; the end-to-end wiring (`AUDIT_LOG` migration, Postgres `AuditWriter`, worker registration, enqueue path, FSM-transition audit) is deferred until the first real Write Tool and ships together with it.
 2.  **Deterministic Generation (FR-19):** Build Go handlers for deterministic artifact creation (PDF/Excel) isolated from direct LLM output generation.
 3.  **Linear Pipeline Orchestrator (FR-1, FR-2, FR-3, NFR-1):** Build the synchronous L0/L1 handlers (strict webhook latency) and the asynchronous L2 pipeline workflows.
 4.  **Graph Engine (FR-4):** Introduce the optional DAG runtime for L3 multi-agent loops.
